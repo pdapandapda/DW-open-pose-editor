@@ -1,0 +1,605 @@
+{
+  "id": "8a1c696b-0121-42af-acdb-85c2d61f9434",
+  "revision": 0,
+  "last_node_id": 53,
+  "last_link_id": 126,
+  "nodes": [
+    {
+      "id": 22,
+      "type": "PreviewImage",
+      "pos": [
+        4213.031417342791,
+        5827.49994665471
+      ],
+      "size": [
+        386.8968392366469,
+        698.3506135737452
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 110
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewImage",
+        "cnr_id": "comfy-core",
+        "ver": "0.7.0"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 44,
+      "type": "SavePoseToJson",
+      "pos": [
+        2000.7265168461367,
+        6537.103535126513
+      ],
+      "size": [
+        270,
+        78
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "pose_point",
+          "type": "POSE_KEYPOINT",
+          "link": 100
+        },
+        {
+          "name": "pose_image",
+          "shape": 7,
+          "type": "IMAGE",
+          "link": 102
+        }
+      ],
+      "outputs": [
+        {
+          "name": "filename",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "SavePoseToJson"
+      },
+      "widgets_values": [
+        "poses/pose"
+      ]
+    },
+    {
+      "id": 4,
+      "type": "PreviewImage",
+      "pos": [
+        3362.4859147998404,
+        5921.251434456992
+      ],
+      "size": [
+        280.0614219334325,
+        412.89445589186744
+      ],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 125
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewImage",
+        "cnr_id": "comfy-core",
+        "ver": "0.7.0"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 3,
+      "type": "PreviewImage",
+      "pos": [
+        3069.6687598259687,
+        5921.592758927933
+      ],
+      "size": [
+        273.1624258171455,
+        423.78584187217984
+      ],
+      "flags": {},
+      "order": 8,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 126
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewImage",
+        "cnr_id": "comfy-core",
+        "ver": "0.7.0"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 5,
+      "type": "OpenposePreprocessor",
+      "pos": [
+        1950.0782502179504,
+        5750.275224615725
+      ],
+      "size": [
+        374.2103665282883,
+        174
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "label": "图像",
+          "name": "image",
+          "type": "IMAGE",
+          "link": 5
+        }
+      ],
+      "outputs": [
+        {
+          "label": "图像",
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            97,
+            102,
+            120
+          ]
+        },
+        {
+          "label": "姿态关键点",
+          "name": "POSE_KEYPOINT",
+          "type": "POSE_KEYPOINT",
+          "links": [
+            100,
+            121
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "OpenposePreprocessor",
+        "cnr_id": "comfyui_controlnet_aux",
+        "ver": "1.1.3"
+      },
+      "widgets_values": [
+        "enable",
+        "enable",
+        "enable",
+        512,
+        "enable"
+      ]
+    },
+    {
+      "id": 43,
+      "type": "GetImageSize",
+      "pos": [
+        2363.7731418030903,
+        5980.815604558259
+      ],
+      "size": [
+        210,
+        136
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 97
+        }
+      ],
+      "outputs": [
+        {
+          "name": "width",
+          "type": "INT",
+          "links": [
+            123
+          ]
+        },
+        {
+          "name": "height",
+          "type": "INT",
+          "links": [
+            124
+          ]
+        },
+        {
+          "name": "batch_size",
+          "type": "INT",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "GetImageSize"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 7,
+      "type": "LoadImage",
+      "pos": [
+        1950.5868391701154,
+        5975.91362400996
+      ],
+      "size": [
+        374.2103665282883,
+        500
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            5,
+            122
+          ]
+        },
+        {
+          "name": "MASK",
+          "type": "MASK",
+          "links": null
+        }
+      ],
+      "title": "01_R_UPIMG_上传照片",
+      "properties": {
+        "Node name for S&R": "LoadImage",
+        "cnr_id": "comfy-core",
+        "ver": "0.3.76"
+      },
+      "widgets_values": [
+        "1100181935.jpg",
+        "image"
+      ]
+    },
+    {
+      "id": 49,
+      "type": "Nui.OpenPoseEditor",
+      "pos": [
+        3761.5275351589003,
+        5828.970725815247
+      ],
+      "size": [
+        347.784765625,
+        522
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "pose_image",
+          "shape": 7,
+          "type": "IMAGE",
+          "link": null
+        },
+        {
+          "name": "pose_point",
+          "shape": 7,
+          "type": "POSE_KEYPOINT",
+          "link": null
+        },
+        {
+          "name": "prev_image",
+          "shape": 7,
+          "type": "IMAGE",
+          "link": null
+        },
+        {
+          "name": "bridge_anything",
+          "shape": 7,
+          "type": "IMAGE",
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "dw_pose_image",
+          "type": "IMAGE",
+          "links": [
+            110
+          ]
+        },
+        {
+          "name": "dw_comb_image",
+          "type": "IMAGE",
+          "links": null
+        },
+        {
+          "name": "dw_pose_image_width",
+          "type": "INT",
+          "links": null
+        },
+        {
+          "name": "dw_pose_image_height",
+          "type": "INT",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "Nui.OpenPoseEditor",
+        "poses_datas": "{    \"width\": 526,    \"height\": 512,    \"people\": [        {            \"pose_keypoints_2d\": [                211.86111111111111,                116,                1,                234.69097222222223,                189,                1,                176.24652777777777,                191,                1,                171.68055555555557,                308,                1,                211.86111111111111,                388,                1,                291.30902777777777,                186,                1,                308.65972222222223,                305,                1,                262.08680555555554,                385,                1,                186.29166666666669,                392,                1,                173.50694444444443,                511,                1,                0,                0,                0,                260.2604166666667,                403,                1,                0,                0,                0,                0,                0,                0,                200.90277777777777,                100,                1,                227.38541666666669,                100,                1,                189.03125,                102,                1,                256.60763888888886,                105,                1            ]        }    ]}",
+        "output_width_for_dwpose": 512,
+        "output_height_for_dwpose": 512
+      },
+      "widgets_values": [
+        "openpose_dw_bg_temp_1769185269989.png",
+        512,
+        512,
+        512,
+        false,
+        "",
+        "{    \"width\": 526,    \"height\": 512,    \"people\": [        {            \"pose_keypoints_2d\": [                211.86111111111111,                116,                1,                234.69097222222223,                189,                1,                176.24652777777777,                191,                1,                171.68055555555557,                308,                1,                211.86111111111111,                388,                1,                291.30902777777777,                186,                1,                308.65972222222223,                305,                1,                262.08680555555554,                385,                1,                186.29166666666669,                392,                1,                173.50694444444443,                511,                1,                0,                0,                0,                260.2604166666667,                403,                1,                0,                0,                0,                0,                0,                0,                200.90277777777777,                100,                1,                227.38541666666669,                100,                1,                189.03125,                102,                1,                256.60763888888886,                105,                1            ]        }    ]}"
+      ]
+    },
+    {
+      "id": 52,
+      "type": "Nui.OpenPoseEditor",
+      "pos": [
+        2621.436708177794,
+        5888.6372284911595
+      ],
+      "size": [
+        347.784765625,
+        522
+      ],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "pose_image",
+          "shape": 7,
+          "type": "IMAGE",
+          "link": 120
+        },
+        {
+          "name": "pose_point",
+          "shape": 7,
+          "type": "POSE_KEYPOINT",
+          "link": 121
+        },
+        {
+          "name": "prev_image",
+          "shape": 7,
+          "type": "IMAGE",
+          "link": 122
+        },
+        {
+          "name": "bridge_anything",
+          "shape": 7,
+          "type": "IMAGE",
+          "link": null
+        },
+        {
+          "name": "output_width_for_dwpose",
+          "shape": 7,
+          "type": "INT",
+          "widget": {
+            "name": "output_width_for_dwpose"
+          },
+          "link": 123
+        },
+        {
+          "name": "output_height_for_dwpose",
+          "shape": 7,
+          "type": "INT",
+          "widget": {
+            "name": "output_height_for_dwpose"
+          },
+          "link": 124
+        }
+      ],
+      "outputs": [
+        {
+          "name": "dw_pose_image",
+          "type": "IMAGE",
+          "links": [
+            125
+          ]
+        },
+        {
+          "name": "dw_comb_image",
+          "type": "IMAGE",
+          "links": [
+            126
+          ]
+        },
+        {
+          "name": "dw_pose_image_width",
+          "type": "INT",
+          "links": null
+        },
+        {
+          "name": "dw_pose_image_height",
+          "type": "INT",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "Nui.OpenPoseEditor",
+        "poses_datas": "{\n    \"width\": 526,\n    \"height\": 512,\n    \"people\": [\n        {\n            \"pose_keypoints_2d\": [\n                211.86111111111111,\n                116,\n                1,\n                234.69097222222223,\n                189,\n                1,\n                176.24652777777777,\n                191,\n                1,\n                171.68055555555557,\n                308,\n                1,\n                211.86111111111111,\n                388,\n                1,\n                291.30902777777777,\n                186,\n                1,\n                308.65972222222223,\n                305,\n                1,\n                262.08680555555554,\n                385,\n                1,\n                186.29166666666669,\n                392,\n                1,\n                173.50694444444443,\n                511,\n                1,\n                160.72222222222217,\n                630,\n                1,\n                260.2604166666667,\n                403,\n                1,\n                295.875,\n                511,\n                1,\n                331.4895833333333,\n                619,\n                1,\n                200.90277777777777,\n                100,\n                1,\n                227.38541666666669,\n                100,\n                1,\n                189.03125,\n                102,\n                1,\n                256.60763888888886,\n                105,\n                1\n            ]\n        }\n    ]\n}",
+        "output_width_for_dwpose": 526,
+        "output_height_for_dwpose": 512,
+        "backgroundImage": "C:\\ComfyUI\\input\\openpose_ld_temp_1769185270035.png"
+      },
+      "widgets_values": [
+        "ComfyUI_OpenPose_52.png",
+        512,
+        512,
+        true,
+        true,
+        "C:\\ComfyUI\\input\\openpose_ld_temp_1769185270035.png",
+        "{\n    \"width\": 526,\n    \"height\": 512,\n    \"people\": [\n        {\n            \"pose_keypoints_2d\": [\n                211.86111111111111,\n                116,\n                1,\n                234.69097222222223,\n                189,\n                1,\n                176.24652777777777,\n                191,\n                1,\n                171.68055555555557,\n                308,\n                1,\n                211.86111111111111,\n                388,\n                1,\n                291.30902777777777,\n                186,\n                1,\n                308.65972222222223,\n                305,\n                1,\n                262.08680555555554,\n                385,\n                1,\n                186.29166666666669,\n                392,\n                1,\n                173.50694444444443,\n                511,\n                1,\n                160.72222222222217,\n                630,\n                1,\n                260.2604166666667,\n                403,\n                1,\n                295.875,\n                511,\n                1,\n                331.4895833333333,\n                619,\n                1,\n                200.90277777777777,\n                100,\n                1,\n                227.38541666666669,\n                100,\n                1,\n                189.03125,\n                102,\n                1,\n                256.60763888888886,\n                105,\n                1\n            ]\n        }\n    ]\n}"
+      ]
+    }
+  ],
+  "links": [
+    [
+      5,
+      7,
+      0,
+      5,
+      0,
+      "IMAGE"
+    ],
+    [
+      97,
+      5,
+      0,
+      43,
+      0,
+      "IMAGE"
+    ],
+    [
+      100,
+      5,
+      1,
+      44,
+      0,
+      "POSE_KEYPOINT"
+    ],
+    [
+      102,
+      5,
+      0,
+      44,
+      1,
+      "IMAGE"
+    ],
+    [
+      110,
+      49,
+      0,
+      22,
+      0,
+      "IMAGE"
+    ],
+    [
+      120,
+      5,
+      0,
+      52,
+      0,
+      "IMAGE"
+    ],
+    [
+      121,
+      5,
+      1,
+      52,
+      1,
+      "POSE_KEYPOINT"
+    ],
+    [
+      122,
+      7,
+      0,
+      52,
+      2,
+      "IMAGE"
+    ],
+    [
+      123,
+      43,
+      0,
+      52,
+      4,
+      "INT"
+    ],
+    [
+      124,
+      43,
+      1,
+      52,
+      5,
+      "INT"
+    ],
+    [
+      125,
+      52,
+      0,
+      4,
+      0,
+      "IMAGE"
+    ],
+    [
+      126,
+      52,
+      1,
+      3,
+      0,
+      "IMAGE"
+    ]
+  ],
+  "groups": [
+    {
+      "id": 1,
+      "title": "节点应用",
+      "bounding": [
+        1927.5918869085724,
+        5667.721978216682,
+        1784.291759884297,
+        967.4115869615671
+      ],
+      "color": "#3f789e",
+      "font_size": 22,
+      "flags": {}
+    },
+    {
+      "id": 2,
+      "title": "手工应用",
+      "bounding": [
+        3732.4185274715996,
+        5673.290022657993,
+        915.0939577054264,
+        957.2929308640605
+      ],
+      "color": "#3f789e",
+      "font_size": 22,
+      "flags": {}
+    }
+  ],
+  "config": {},
+  "extra": {
+    "workflowRendererVersion": "LG",
+    "ue_links": [],
+    "ds": {
+      "scale": 0.7972024500000383,
+      "offset": [
+        -1571.0951883972325,
+        -5339.531429012692
+      ]
+    },
+    "frontendVersion": "1.36.14",
+    "VHS_latentpreview": false,
+    "VHS_latentpreviewrate": 0,
+    "VHS_MetadataImage": true,
+    "VHS_KeepIntermediate": true
+  },
+  "version": 0.4
+}
