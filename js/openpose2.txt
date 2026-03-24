@@ -963,166 +963,141 @@ this.panel.addButton("新增测试(含手)", () => {
     }
 
 addPose(keypoints = [], poseId = null, type = "body") {
-    const currentPoseId = poseId !== null ? poseId : this.nextPoseId++;
-    const circles = {};
-    const lines = [];
+        const currentPoseId = poseId !== null ? poseId : this.nextPoseId++;
+        const circles = {};
+        const lines = [];
 
-    let connections = connect_keypoints;
-    let baseColor = [255, 255, 255];
-    let radius = 5;
+        // 配置分流
+        let connections = connect_keypoints;
+        let baseColor = [255, 255, 255];
+        let radius = 5;
 
-    if (type === "left_hand") {
-        connections = hand_connections;
-        baseColor = [0, 255, 0];
-        radius = 3.2; // 稍微调大，防止看不见
-    } else if (type === "right_hand") {
-        connections = hand_connections;
-        baseColor = [255, 0, 0];
-        radius = 3.2;
-    } else if (type === "face") {
-        connections = face_connections;
-        baseColor = [255, 255, 255];
-        radius = 1.5;
-    }
+        if (type === "left_hand") {
+            connections = hand_connections;
+            baseColor = [0, 255, 0]; // 绿色
+            radius = 2.5;
+        } else if (type === "right_hand") {
+            connections = hand_connections;
+            baseColor = [255, 0, 0]; // 红色
+            radius = 2.5;
+        } else if (type === "face") {
+            connections = face_connections;
+            baseColor = [255, 255, 255];
+            radius = 1.2;
+        }
 
-    for (let i = 0; i < keypoints.length / 3; i++) {
-        const x = keypoints[i * 3];
-        const y = keypoints[i * 3 + 1];
-        let confidence = keypoints[i * 3 + 2];
+        // 绘制点
+        for (let i = 0; i < keypoints.length / 3; i++) {
+            const x = keypoints[i * 3];
+            const y = keypoints[i * 3 + 1];
+            const confidence = keypoints[i * 3 + 2];
 
-        // 预防措施：坐标为0通常是无效点
-        if (x === 0 && y === 0) continue;
-        if (typeof confidence === 'undefined' || confidence <= 0) confidence = 1.0;
+            if (confidence === 0) continue;
 
-        const colorArr = (type === "body" && connect_color[i]) ? connect_color[i] : baseColor;
+            const colorArr = (type === "body" && connect_color[i]) ? connect_color[i] : baseColor;
 
-        const circle = new fabric.Circle({
-            left: x, top: y, radius: radius,
-            fill: `rgb(${colorArr.join(",")})`,
-            stroke: `rgb(${colorArr.join(",")})`,
-            strokeWidth: 1,
-            originX: 'center', originY: 'center',
-            hasControls: false, hasBorders: false,
-            _id: i,
-            _poseId: currentPoseId,
-            _type: type,
-            selectable: true
+            const circle = new fabric.Circle({
+                left: x, top: y, radius: radius,
+                fill: `rgb(${colorArr.join(",")})`,
+                stroke: `rgb(${colorArr.join(",")})`,
+                originX: 'center', originY: 'center',
+                hasControls: false, hasBorders: false,
+                _id: i,
+                _poseId: currentPoseId,
+                _type: type // 极其重要：用于导出
+            });
+            circles[i] = circle;
+        }
+
+        // 绘制纺锤形连线
+        connections.forEach((pair) => {
+            const startCircle = circles[pair[0]];
+            const endCircle = circles[pair[1]];
+            if (!startCircle || !endCircle) return;
+
+            const points = this.getFusiformPoints(
+                { x: startCircle.left, y: startCircle.top },
+                { x: endCircle.left, y: endCircle.top }
+            );
+
+            const line = new fabric.Polygon(points, {
+                fill: startCircle.fill.replace("rgb", "rgba").replace(")", ", 0.7)"),
+                strokeWidth: 0,
+                selectable: false,
+                evented: false,
+                originX: 'center',
+                originY: 'center',
+                _startCircle: startCircle,
+                _endCircle: endCircle,
+                _poseId: currentPoseId
+            });
+
+            lines.push(line);
         });
 
-        circles[i] = circle;
-    }
+        this.canvas.add(...lines, ...Object.values(circles));
 
-    connections.forEach((pair) => {
-        const startCircle = circles[pair[0]];
-        const endCircle = circles[pair[1]];
-        if (!startCircle || !endCircle) return;
-
-        const points = this.getFusiformPoints(
-            { x: startCircle.left, y: startCircle.top },
-            { x: endCircle.left, y: endCircle.top }
-        );
-
-        const line = new fabric.Polygon(points, {
-            fill: startCircle.fill.replace("rgb", "rgba").replace(")", ", 0.6)"),
-            strokeWidth: 0,
-            selectable: false,
-            evented: false,
-            originX: 'center',
-            originY: 'center',
-            _startCircle: startCircle,
-            _endCircle: endCircle,
-            _poseId: currentPoseId,
-            _type: type // 标记连线的类型
-        });
-        lines.push(line);
-    });
-
-    // 核心修正：先加线，后加点，确保点在顶层
-    if (lines.length > 0) this.canvas.add(...lines);
-    const circleObjs = Object.values(circles);
-    if (circleObjs.length > 0) {
-        this.canvas.add(...circleObjs);
-        // 强制所有点同步物理坐标并置顶
-        circleObjs.forEach(c => {
-            c.setCoords();
-            c.bringToFront();
+        return new Promise(resolve => {
+            setTimeout(() => {
+                this.canvas.requestRenderAll();
+                resolve();
+            }, 0);
         });
     }
-
-    return new Promise(resolve => {
-        requestAnimationFrame(() => {
-            this.canvas.requestRenderAll();
-            resolve();
-        });
-    });
-}
 async setPose(people) {
-    if (!people || people.length === 0) return;
+        const tempBackgroundImage = this.canvas.backgroundImage;
+        this.canvas.clear();
+        this.canvas.backgroundImage = tempBackgroundImage;
+        this.canvas.backgroundColor = "#000";
+        this.nextPoseId = 0;
 
-    const tempBackgroundImage = this.canvas.backgroundImage;
+        const posePromises = [];
 
-    // 1. 停止所有正在进行的渲染，防止移动时的冲突
-    this.canvas.discardActiveObject();
-    this.canvas.clear();
+        people.forEach(person => {
+            const pid = this.nextPoseId++; // 每个人分配唯一 ID
 
-    this.canvas.backgroundImage = tempBackgroundImage;
-    this.canvas.backgroundColor = "#000";
-    this.nextPoseId = 0;
+            // 1. 绘制身体
+            posePromises.push(this.addPose(person.pose_keypoints_2d || [], pid, "body"));
 
-    // 2. 使用快照防止异步数据漂移
-    const peopleData = JSON.parse(JSON.stringify(people));
-    const posePromises = [];
+            // 2. 绘制左手
+            if (person.hand_left_keypoints_2d && person.hand_left_keypoints_2d.length > 0) {
+                posePromises.push(this.addPose(person.hand_left_keypoints_2d, pid, "left_hand"));
+            }
 
-    peopleData.forEach(person => {
-        const pid = this.nextPoseId++;
+            // 3. 绘制右手
+            if (person.hand_right_keypoints_2d && person.hand_right_keypoints_2d.length > 0) {
+                posePromises.push(this.addPose(person.hand_right_keypoints_2d, pid, "right_hand"));
+            }
 
-        // 身体
-        const bodyData = person.body || person.pose_keypoints_2d || [];
-        posePromises.push(this.addPose(bodyData, pid, "body"));
+            // 4. 绘制面部
+            if (person.face_keypoints_2d && person.face_keypoints_2d.length > 0) {
+                posePromises.push(this.addPose(person.face_keypoints_2d, pid, "face"));
+            }
+        });
 
-        // 左手
-        const leftHandData = person.left_hand || person.hand_left_keypoints_2d;
-        if (leftHandData && leftHandData.length > 0) {
-            posePromises.push(this.addPose(leftHandData, pid, "left_hand"));
-        }
+        await Promise.all(posePromises);
 
-        // 右手
-        const rightHandData = person.right_hand || person.hand_right_keypoints_2d;
-        if (rightHandData && rightHandData.length > 0) {
-            posePromises.push(this.addPose(rightHandData, pid, "right_hand"));
-        }
-
-        // 脸部
-        const faceData = person.face || person.face_keypoints_2d;
-        if (faceData && faceData.length > 0) {
-            posePromises.push(this.addPose(faceData, pid, "face"));
-        }
-    });
-
-    await Promise.all(posePromises);
-
-    // 3. 优化锁定逻辑：增加对手部的单独层级管理
-    this.canvas.getObjects().forEach(obj => {
-        if (obj.type === 'polygon') {
-            obj.set({
+        // 统一锁定所有连线
+        this.canvas.getObjects('polygon').forEach(line => {
+            line.set({
                 selectable: false,
                 evented: false,
                 lockMovementX: true,
                 lockMovementY: true,
-                hasControls: false
+                lockRotation: true,
+                lockScalingX: true,
+                lockScalingY: true,
+                lockSkewingX: true,
+                lockSkewingY: true,
+                hasControls: false,
+                hasBorders: false
             });
-        }
-        // 关键：确保点位坐标在 Fabric 内部同步
-        obj.setCoords();
-    });
+        });
 
-    this.canvas.requestRenderAll();
-
-    // 🚨 极其关键：只有当数据真正发生改变且不是在“拖拽中”才保存
-    if (!this.canvas._isDragging) {
+        this.canvas.getObjects().forEach(obj => obj.setCoords());
+        this.canvas.renderAll();
         this.saveToNode();
     }
-}
     calcResolution(width, height) {
         const viewportWidth = window.innerWidth / 2.25;
         const viewportHeight = window.innerHeight * 0.75;
@@ -1333,56 +1308,38 @@ initCanvas(elem) {
             }
         });
 
-// 6. 核心监听：只在松手时触发一次“绝对同步”
-canvas.on("object:modified", (e) => {
-    if (this.lockMode || !e.target) return;
+        // 6. 核心修改监听：集成原版的坐标重置与暴力重绘魔法
+        canvas.on("object:modified", (e) => {
+            if (this.lockMode || !e.target) return;
 
-    const target = e.target;
+            const target = e.target;
 
-    // 1. 处理全选移动 (ActiveSelection)
-    if (target.type === 'activeSelection') {
-        // 关键：Fabric 在 ActiveSelection 模式下，子对象的 left/top 是相对中心的偏移
-        // 我们必须先将它们“拍平”回 Canvas 的绝对像素坐标
-        target.setCoords();
-        const objects = target.getObjects();
-
-        objects.forEach(obj => {
-            if (obj.type === 'circle') {
-                // 魔法函数：getCenterPoint() 会自动计算所有 group/scale 变换
-                // 拿到的是该点在 1:1 像素画布上的真实位置
-                const absoluteCenter = obj.getCenterPoint();
-                obj.set({
-                    left: absoluteCenter.x,
-                    top: absoluteCenter.y,
+            // 魔法2：当拖拽多选组松手时，将组内的相对坐标强行“拍平”为绝对物理坐标
+            if (target.type === 'activeSelection') {
+                const groupMatrix = target.calcTransformMatrix();
+                target.forEachObject(obj => {
+                    if (obj.type === 'circle') {
+                        const point = new fabric.Point(obj.left, obj.top);
+                        const finalPos = fabric.util.transformPoint(point, groupMatrix);
+                        obj.set({
+                            left: finalPos.x,
+                            top: finalPos.y
+                        });
+                        obj.setCoords();
+                    }
                 });
-                // 彻底断开与组的关联
-                obj.set("group", null);
-                obj.setCoords();
             }
+
+            // 魔法3：原版最无敌的“暴力同步”法——先序列化当前坐标，再直接反序列化重绘画布
+            // 这会销毁错误的旧线条，并用新的绝对坐标重新生成完美对齐的新线条
+            const currentStateJson = this.serializeJSON();
+            this.loadJSON(currentStateJson);
+
+            // 保存并发送给后端 Python
+            this.saveToNode();
         });
 
-        // 2. 暴力销毁选择框。这是解决“漂移”的特效药
-        // 只有销毁了 Selection，Fabric 才会停止把“缩放偏量”应用到对象上
-        canvas.discardActiveObject();
-    } else {
-        target.setCoords();
-    }
-
-    // 3. 此时 Canvas 上的所有 Circle 已经拥有了正确的像素坐标
-    // 我们直接执行 serialize -> load 闭环重绘
-    // 这样纺锤线会根据最新的像素坐标重新生成，由于 Key 名对齐 DWPose，手部不会消失
-    const poseJson = this.serializeJSON();
-    this.loadJSON(poseJson);
-
-    // 4. 同步给 ComfyUI 后端
-    this.saveToNode();
-    this.canvas.requestRenderAll();
-
-    console.log(">>> [绝对坐标同步] 漂移已修正，坐标已根据 1:1 画布像素拍平");
-});
-
-
-return canvas;
+        return canvas;
     } // <-- 这里正确闭合 initCanvas 方法
 
 
@@ -1557,75 +1514,63 @@ return canvas;
     }
 
 serializeJSON() {
-    if (!this.canvas) return "";
+        const originalViewportTransform = this.canvas.viewportTransform;
+        this.canvas.viewportTransform = [1, 0, 0, 1, 0, 0];
 
-    // 重置视口，确保 getCenterPoint 获取的是不受 transform 影响的画布绝对坐标
-    const originalViewportTransform = this.canvas.viewportTransform;
-    this.canvas.viewportTransform = [1, 0, 0, 1, 0, 0];
+        const allCircles = this.canvas.getObjects('circle');
+        const poses = {};
 
-    const allCircles = this.canvas.getObjects('circle');
-    const poses = {};
+        allCircles.forEach(circle => {
+            const poseId = circle._poseId; // 确保使用这个变量名
+            if (!poses[poseId]) {
+                poses[poseId] = {
+                    body: new Array(18 * 3).fill(0),
+                    left_hand: new Array(21 * 3).fill(0),
+                    right_hand: new Array(21 * 3).fill(0),
+                    face: new Array(70 * 3).fill(0)
+                };
+            }
 
-    allCircles.forEach(circle => {
-        const poseId = circle._poseId;
-        if (typeof poseId === 'undefined' || poseId === null) return;
+            const center = circle.getCenterPoint();
+            const type = circle._type || "body";
+            const idx = circle._id * 3;
 
-        if (!poses[poseId]) {
-            poses[poseId] = {
-                body: new Array(18 * 3).fill(0),
-                left_hand: new Array(21 * 3).fill(0),
-                right_hand: new Array(21 * 3).fill(0),
-                face: new Array(70 * 3).fill(0)
-            };
-        }
+            // 修复点：将 pid 全部改为 poseId
+            let targetArr;
+            if (type === "body") targetArr = poses[poseId].body;
+            else if (type === "left_hand") targetArr = poses[poseId].left_hand;
+            else if (type === "right_hand") targetArr = poses[poseId].right_hand;
+            else if (type === "face") targetArr = poses[poseId].face;
 
-        // 使用 getCenterPoint 确保获取的是不受 transform 影响的绝对中心像素坐标
-        const center = circle.getCenterPoint();
-        const type = circle._type || "body";
-        const idx = circle._id * 3;
-
-        // 统一 Key 名映射到 DWPose 的 4 个核心字段
-        let targetArr = null;
-        if (type === "body") targetArr = poses[poseId].body;
-        else if (type === "left_hand") targetArr = poses[poseId].left_hand;
-        else if (type === "right_hand") targetArr = poses[poseId].right_hand;
-        else if (type === "face") targetArr = poses[poseId].face;
-
-        if (targetArr && idx < targetArr.length) {
-            targetArr[idx] = Math.round(center.x);
-            targetArr[idx + 1] = Math.round(center.y);
-            targetArr[idx + 2] = 1.0; // 只要点在画布上，置信度就给满
-        }
-    });
-
-    const people = [];
-    Object.keys(poses).sort((a,b)=>a-b).forEach(pid => {
-        const p = poses[pid];
-
-        // 辅助判定某个部位是否有有效数据
-        const hasData = (arr) => arr && arr.some(v => v !== 0);
-
-        people.push({
-            // --- 统一输出标准字段名，完美适配 loadJSON 的字段寻找逻辑 ---
-            "pose_keypoints_2d": p.body,
-            "hand_left_keypoints_2d": hasData(p.left_hand) ? p.left_hand : null,
-            "hand_right_keypoints_2d": hasData(p.right_hand) ? p.right_hand : null,
-            "face_keypoints_2d": hasData(p.face) ? p.face : null
+            if (targetArr) {
+                targetArr[idx] = Math.round(center.x);
+                targetArr[idx + 1] = Math.round(center.y);
+                targetArr[idx + 2] = 1.0;
+            }
         });
-    });
 
-    // 按照 DWPose 官方标准构造最终 JSON，输出 canvas_width 以防止漂移
-    const json = JSON.stringify({
-        "width": Math.round(this.canvas.width),
-        "height": Math.round(this.canvas.height),
-        "canvas_width": Math.round(this.canvas.width),
-        "canvas_height": Math.round(this.canvas.height),
-        "people": people
-    }, null, 4);
+        const people = [];
+        Object.keys(poses).sort((a, b) => a - b).forEach(poseId => {
+            const p = poses[poseId];
+            // 构造符合后端插件要求的标准格式
+            people.push({
+                "pose_keypoints_2d": p.body,
+                "face_keypoints_2d": p.face.some(v => v !== 0) ? p.face : null,
+                "hand_left_keypoints_2d": p.left_hand.some(v => v !== 0) ? p.left_hand : null,
+                "hand_right_keypoints_2d": p.right_hand.some(v => v !== 0) ? p.right_hand : null
+            });
+        });
 
-    this.canvas.viewportTransform = originalViewportTransform;
-    return json;
-}
+        const json = JSON.stringify({
+            "width": Math.round(this.canvas.width),
+            "height": Math.round(this.canvas.height),
+            "people": people
+        }, null, 4);
+
+        this.canvas.viewportTransform = originalViewportTransform;
+        return json;
+    }
+
     async loadBackgroundImage(e) {
         const file = e.target.files[0];
         if (!file) return;
@@ -1683,73 +1628,82 @@ serializeJSON() {
     }
 
 loadJSON(text) {
-    if (!text) return "Empty data";
+        try {
+            const json = JSON.parse(text);
 
-    try {
-        // 1. 深度克隆数据，防止原地修改导致的第二次运行逻辑错误
-        const rawJson = typeof text === 'string' ? JSON.parse(text) : text;
-        const json = JSON.parse(JSON.stringify(rawJson));
+            if (!json["width"] || !json["height"]) {
+                return 'JSON is missing width or height properties.';
+            }
+            this.resizeCanvas(json["width"], json["height"]);
 
-        // 2. 增强型尺寸读取
-        const width = json.canvas_width || json.width || (this.canvas ? this.canvas.width : 512);
-        const height = json.canvas_height || json.height || (this.canvas ? this.canvas.height : 512);
+            const people = json["people"] || [];
 
-        this.resizeCanvas(width, height);
-
-        const people = json.people || [];
-
-        // 3. 智能坐标转换与字段对齐
-        people.forEach(person => {
-            // 模糊匹配：只要包含这些关键字的 Key 都处理
-            const allKeys = Object.keys(person);
-            allKeys.forEach(key => {
-                if (key.includes("keypoints_2d") || key === "body" || key === "face" || key.includes("hand")) {
-                    const kpts = person[key];
-                    if (Array.isArray(kpts) && kpts.length > 0) {
-
-                        // 改进的相对坐标判定：检查前 10 个有效点
-                        let isRelative = false;
-                        for (let i = 0; i < Math.min(kpts.length, 30); i += 3) {
-                            const x = kpts[i];
-                            const y = kpts[i+1];
-                            const conf = kpts[i+2];
-                            // 只要有一个置信度大于 0 且坐标在 0-1.1 之间的点，就认为是相对坐标
-                            if (conf > 0 && x > 0 && x <= 1.1 && y > 0 && y <= 1.1) {
-                                isRelative = true;
-                                break;
-                            }
-                        }
-
-                        if (isRelative) {
-                            for (let i = 0; i < kpts.length; i += 3) {
-                                kpts[i] *= width;
-                                kpts[i + 1] *= height;
-                            }
+            // 1. 收集所有部位的关键点用于范围检测
+            let allKeypointsForCheck = [];
+            people.forEach(person => {
+                // 检查所有可能的关键点字段
+                ["pose_keypoints_2d", "hand_left_keypoints_2d", "hand_right_keypoints_2d", "face_keypoints_2d"].forEach(key => {
+                    const kpts = person[key] || [];
+                    for (let i = 0; i < kpts.length; i += 3) {
+                        if (kpts[i + 2] > 0) {
+                            allKeypointsForCheck.push([kpts[i], kpts[i + 1]]);
                         }
                     }
-                }
+                });
             });
-        });
 
-        // 4. 强制重置渲染状态并调用渲染
-        if (this.canvas) {
-            this.canvas.discardActiveObject();
-            // 在这里调用 setPose
+            // 2. 自动居中逻辑（如果关键点全部在画布外）
+            if (allKeypointsForCheck.length > 0) {
+                let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+                allKeypointsForCheck.forEach(pt => {
+                    if (pt[0] < minX) minX = pt[0];
+                    if (pt[0] > maxX) maxX = pt[0];
+                    if (pt[1] < minY) minY = pt[1];
+                    if (pt[1] > maxY) maxY = pt[1];
+                });
+
+                const canvasWidth = this.canvas.getWidth();
+                const canvasHeight = this.canvas.getHeight();
+
+                // 如果检测到所有点都在画布外，进行偏移补偿
+                if (maxX < 0 || minX > canvasWidth || maxY < 0 || minY > canvasHeight) {
+                    const poseWidth = maxX - minX;
+                    const poseHeight = maxY - minY;
+                    const offsetX = -minX + (canvasWidth - poseWidth) / 2;
+                    const offsetY = -minY + (canvasHeight - poseHeight) / 2;
+
+                    people.forEach(person => {
+                        // 同步偏移所有部位
+                        ["pose_keypoints_2d", "hand_left_keypoints_2d", "hand_right_keypoints_2d", "face_keypoints_2d"].forEach(key => {
+                            const kpts = person[key] || [];
+                            for (let i = 0; i < kpts.length; i += 3) {
+                                if (kpts[i + 2] > 0) {
+                                    kpts[i] += offsetX;
+                                    kpts[i + 1] += offsetY;
+                                }
+                            }
+                        });
+                    });
+                }
+            }
+
+            // 3. 将处理好的完整数据传给 setPose
             this.setPose(people);
-        }
 
-        // 5. 恢复过滤器
-        if (this.poseFilterInput) {
-            const idx = parseInt(this.poseFilterInput.value, 10);
-            if (!isNaN(idx)) this.applyPoseFilter(idx);
-        }
+            // 4. 恢复过滤器状态
+            if (this.poseFilterInput) {
+                const currentFilterIndex = parseInt(this.poseFilterInput.value, 10);
+                if (!isNaN(currentFilterIndex)) {
+                    this.applyPoseFilter(currentFilterIndex);
+                }
+            }
 
-        return null;
-    } catch (e) {
-        console.error("loadJSON 优化版运行失败:", e);
-        return `Failed to parse JSON: ${e.message}`;
+            return null;
+        } catch (e) {
+            return `Failed to parse JSON: ${e.message}`;
+        }
     }
-}
+
 }
 
 app.registerExtension({

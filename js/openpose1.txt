@@ -343,11 +343,10 @@ class OpenPosePanel {
         }
     }
 
-fixLimbs() {
+    fixLimbs() {
         if (this.lockMode) return;
 
-        // 1. 核心修复：仅处理身体部位的点，防止手部和面部的点 ID 混淆干扰！
-        const allCircles = this.canvas.getObjects('circle').filter(c => c._type === 'body' || !c._type);
+        const allCircles = this.canvas.getObjects('circle');
         const poses = {};
         allCircles.forEach(circle => {
             const poseId = circle._poseId;
@@ -355,111 +354,103 @@ fixLimbs() {
             poses[poseId].push(circle);
         });
 
-        // 2. 核心修复：强解绝对坐标，防止在框选状态下点击“补全”导致新生成的点坐标飞到画布外
-        const getAbsoluteCenter = (obj) => {
-            if (obj.group) {
-                const matrix = obj.group.calcTransformMatrix();
-                return fabric.util.transformPoint(new fabric.Point(obj.left, obj.top), matrix);
-            }
-            return { x: obj.left, y: obj.top };
-        };
+        // COCO 18 Keypoints
+        // 0:Nose, 1:Neck, 2:R-Sho, 3:R-Elb, 4:R-Wr, 5:L-Sho, 6:L-Elb, 7:L-Wr
+        // 8:R-Hip, 9:R-Knee, 10:R-Ank, 11:L-Hip, 12:L-Knee, 13:L-Ank
+        // 14:R-Eye, 15:L-Eye, 16:R-Ear, 17:L-Ear
 
-        // COCO 18 关键点对称关系
+        // 对称关系对
         const symmetryPairs = [
             [2, 5], [3, 6], [4, 7],   // 手臂
             [8, 11], [9, 12], [10, 13], // 腿部
-            [14, 15], [16, 17]        // 面部轮廓点
+            [14, 15], [16, 17]        // 面部
         ];
 
-        // 骨骼延伸推测
+        // 父子关系（用于延伸推测）
+        // [Child, Parent, ReferenceParent] -> Child = Parent + (Parent - ReferenceParent) * ratio
+        // 简单起见，我们假设 limb 长度大致相等
         const limbExtensions = [
             [4, 3, 2], [7, 6, 5],   // 手腕
             [10, 9, 8], [13, 12, 11] // 脚踝
         ];
 
-        Object.keys(poses).forEach(poseIdStr => {
-            const poseId = parseInt(poseIdStr);
+        Object.keys(poses).forEach(poseId => {
             const poseCircles = poses[poseId];
             const keypoints = new Array(18).fill(null);
 
-            // 填充存在的身体点
+            // 1. 填充当前存在的点
             poseCircles.forEach(c => {
-                if (c._id >= 0 && c._id < 18) {
-                    keypoints[c._id] = c;
-                }
+                keypoints[c._id] = c;
             });
 
-            // 添加缺失点的通用方法
+            // 2. 尝试补全
+            // 我们需要创建一个辅助函数来添加新点
             const addMissingPoint = (id, x, y) => {
-                if (keypoints[id]) return; // 已存在则跳过
+                if (keypoints[id]) return; // 已存在
 
-                const colorArr = connect_color[id] || [255, 255, 255];
                 const circle = new fabric.Circle({
                     left: x, top: y, radius: 5,
-                    fill: `rgb(${colorArr.join(",")})`,
-                    stroke: `rgb(${colorArr.join(",")})`,
+                    fill: `rgb(${connect_color[id] ? connect_color[id].join(", ") : '255,255,255'})`,
+                    stroke: `rgb(${connect_color[id] ? connect_color[id].join(", ") : '255,255,255'})`,
                     originX: 'center', originY: 'center',
                     hasControls: false, hasBorders: false,
                     _id: id,
-                    _poseId: poseId,
-                    _type: 'body', // 必须显式标记为身体节点，避免后续计算出错
-                    selectable: true,
-                    evented: true
+                    _poseId: parseInt(poseId)
                 });
 
                 this.canvas.add(circle);
-                keypoints[id] = circle; // 存入数组供后续画线使用
+                keypoints[id] = circle; // 更新记录
             };
 
             // 策略 A: 对称补全
             const neck = keypoints[1];
             if (neck) {
-                const neckPos = getAbsoluteCenter(neck);
                 symmetryPairs.forEach(pair => {
+                    const leftId = pair[1]; // 索引大的通常是左侧（在COCO定义中 5,6,7 是左）
                     const rightId = pair[0];
-                    const leftId = pair[1];
 
-                    const R = keypoints[rightId];
                     const L = keypoints[leftId];
+                    const R = keypoints[rightId];
 
-                    if (L && !R) { // 有左没右，补右
-                        const lPos = getAbsoluteCenter(L);
-                        addMissingPoint(rightId, neckPos.x + (neckPos.x - lPos.x), lPos.y);
-                    } else if (!L && R) { // 有右没左，补左
-                        const rPos = getAbsoluteCenter(R);
-                        addMissingPoint(leftId, neckPos.x + (neckPos.x - rPos.x), rPos.y);
+                    if (L && !R) {
+                        // 有左没右，补右
+                        addMissingPoint(rightId, neck.left + (neck.left - L.left), L.top);
+                    } else if (!L && R) {
+                        // 有右没左，补左
+                        addMissingPoint(leftId, neck.left + (neck.left - R.left), R.top);
                     }
                 });
             }
 
-            // 策略 B: 骨骼延伸
+            // 策略 B: 骨骼延伸 (简单的向量加法)
+            // 如果手肘存在，肩膀存在，手腕缺失 -> 手腕 = 手肘 + (手肘-肩膀)
             limbExtensions.forEach(rule => {
                 const [target, p1, p2] = rule;
                 if (!keypoints[target] && keypoints[p1] && keypoints[p2]) {
-                    const pos1 = getAbsoluteCenter(keypoints[p1]);
-                    const pos2 = getAbsoluteCenter(keypoints[p2]);
-                    const vX = pos1.x - pos2.x;
-                    const vY = pos1.y - pos2.y;
-                    addMissingPoint(target, pos1.x + vX, pos1.y + vY);
+                    const P1 = keypoints[p1];
+                    const P2 = keypoints[p2];
+                    const vX = P1.left - P2.left;
+                    const vY = P1.top - P2.top;
+                    addMissingPoint(target, P1.left + vX, P1.top + vY);
                 }
             });
         });
 
-        // 3. 重新生成连线 (仅针对 body)
+        // 重新生成连线
         const existingPolygons = this.canvas.getObjects('polygon');
 
         Object.keys(poses).forEach(poseIdStr => {
             const poseId = parseInt(poseIdStr);
-            // 只拿当前角色的 body 关键点，防止把手部点连进身体
-            const bodyPoints = this.canvas.getObjects('circle').filter(c => c._poseId === poseId && (c._type === 'body' || !c._type));
+            const posePoints = this.canvas.getObjects('circle').filter(c => c._poseId === poseId);
             const pointMap = {};
-            bodyPoints.forEach(p => pointMap[p._id] = p);
+            posePoints.forEach(p => pointMap[p._id] = p);
 
             connect_keypoints.forEach(pair => {
                 const start = pointMap[pair[0]];
                 const end = pointMap[pair[1]];
 
                 if (start && end) {
+                    // 检查线是否已存在
                     const hasLine = existingPolygons.some(l =>
                         l._poseId === poseId &&
                         ((l._startCircle === start && l._endCircle === end) ||
@@ -467,13 +458,14 @@ fixLimbs() {
                     );
 
                     if (!hasLine) {
-                        const startPos = getAbsoluteCenter(start);
-                        const endPos = getAbsoluteCenter(end);
-                        const points = this.getFusiformPoints(startPos, endPos);
+                        // 创建新的纺锤形多边形
+                        const points = this.getFusiformPoints(
+                            { x: start.left, y: start.top },
+                            { x: end.left, y: end.top }
+                        );
 
-                        const colorArr = connect_color[pair[0]] || [255, 255, 255];
                         const polygon = new fabric.Polygon(points, {
-                            fill: `rgba(${colorArr.join(",")}, 0.7)`,
+                            fill: `rgba(${connect_color[pair[0]] ? connect_color[pair[0]].join(", ") : '255,255,255'}, 0.7)`,
                             strokeWidth: 0,
                             selectable: false,
                             evented: false,
@@ -490,21 +482,10 @@ fixLimbs() {
                             originY: 'center',
                             _startCircle: start,
                             _endCircle: end,
-                            _poseId: poseId,
-                            _type: 'body'
+                            _poseId: poseId
                         });
-
                         this.canvas.add(polygon);
-
-                        // 3. 核心修复：同步中心坐标使线完美居中贴合点
-                        polygon._calcDimensions();
-                        polygon.set({
-                            left: polygon.pathOffset.x,
-                            top: polygon.pathOffset.y
-                        });
-                        polygon.setCoords();
-
-                        this.canvas.sendToBack(polygon); // 将连线放到圆点下层
+                        this.canvas.sendToBack(polygon); // 确保线在点下面
                     }
                 }
             });
@@ -669,24 +650,15 @@ fixLimbs() {
             return btn;
         };
 
-this.panel.addButton("新增测试(含手)", () => {
-            const pid = this.nextPoseId++;
+        this.panel.addButton("新增", () => {
+            const default_pose_keypoints_2d = [];
+            DEFAULT_KEYPOINTS.forEach(pt => {
+                default_pose_keypoints_2d.push(pt[0], pt[1], 1.0);
+            });
 
-            // 1. 生成身体
-            const body = [];
-            DEFAULT_KEYPOINTS.forEach(pt => body.push(pt[0], pt[1], 1.0));
-            this.addPose(body, pid, "body");
-
-            // 2. 强制生成一个左手 (在画布坐标 100, 100 位置)
-            const mockHand = new Array(21 * 3).fill(0);
-            for(let i=0; i<21; i++) {
-                mockHand[i*3] = 100 + i;
-                mockHand[i*3+1] = 100 + i;
-                mockHand[i*3+2] = 1.0;
-            }
-            this.addPose(mockHand, pid, "left_hand"); // 强制传入 left_hand 类型
-
+            this.addPose(default_pose_keypoints_2d);
             this.saveToNode();
+            this.syncDimensionsToNode();
         });
 
         this.panel.addButton("删点", () => { this.deleteSelectedPoints(); this.saveToNode(); });
@@ -963,166 +935,141 @@ this.panel.addButton("新增测试(含手)", () => {
     }
 
 addPose(keypoints = [], poseId = null, type = "body") {
-    const currentPoseId = poseId !== null ? poseId : this.nextPoseId++;
-    const circles = {};
-    const lines = [];
+        const currentPoseId = poseId !== null ? poseId : this.nextPoseId++;
+        const circles = {};
+        const lines = [];
 
-    let connections = connect_keypoints;
-    let baseColor = [255, 255, 255];
-    let radius = 5;
+        // 配置分流
+        let connections = connect_keypoints;
+        let baseColor = [255, 255, 255];
+        let radius = 5;
 
-    if (type === "left_hand") {
-        connections = hand_connections;
-        baseColor = [0, 255, 0];
-        radius = 3.2; // 稍微调大，防止看不见
-    } else if (type === "right_hand") {
-        connections = hand_connections;
-        baseColor = [255, 0, 0];
-        radius = 3.2;
-    } else if (type === "face") {
-        connections = face_connections;
-        baseColor = [255, 255, 255];
-        radius = 1.5;
-    }
+        if (type === "left_hand") {
+            connections = hand_connections;
+            baseColor = [0, 255, 0]; // 绿色
+            radius = 2.5;
+        } else if (type === "right_hand") {
+            connections = hand_connections;
+            baseColor = [255, 0, 0]; // 红色
+            radius = 2.5;
+        } else if (type === "face") {
+            connections = face_connections;
+            baseColor = [255, 255, 255];
+            radius = 1.2;
+        }
 
-    for (let i = 0; i < keypoints.length / 3; i++) {
-        const x = keypoints[i * 3];
-        const y = keypoints[i * 3 + 1];
-        let confidence = keypoints[i * 3 + 2];
+        // 绘制点
+        for (let i = 0; i < keypoints.length / 3; i++) {
+            const x = keypoints[i * 3];
+            const y = keypoints[i * 3 + 1];
+            const confidence = keypoints[i * 3 + 2];
 
-        // 预防措施：坐标为0通常是无效点
-        if (x === 0 && y === 0) continue;
-        if (typeof confidence === 'undefined' || confidence <= 0) confidence = 1.0;
+            if (confidence === 0) continue;
 
-        const colorArr = (type === "body" && connect_color[i]) ? connect_color[i] : baseColor;
+            const colorArr = (type === "body" && connect_color[i]) ? connect_color[i] : baseColor;
 
-        const circle = new fabric.Circle({
-            left: x, top: y, radius: radius,
-            fill: `rgb(${colorArr.join(",")})`,
-            stroke: `rgb(${colorArr.join(",")})`,
-            strokeWidth: 1,
-            originX: 'center', originY: 'center',
-            hasControls: false, hasBorders: false,
-            _id: i,
-            _poseId: currentPoseId,
-            _type: type,
-            selectable: true
+            const circle = new fabric.Circle({
+                left: x, top: y, radius: radius,
+                fill: `rgb(${colorArr.join(",")})`,
+                stroke: `rgb(${colorArr.join(",")})`,
+                originX: 'center', originY: 'center',
+                hasControls: false, hasBorders: false,
+                _id: i,
+                _poseId: currentPoseId,
+                _type: type // 极其重要：用于导出
+            });
+            circles[i] = circle;
+        }
+
+        // 绘制纺锤形连线
+        connections.forEach((pair) => {
+            const startCircle = circles[pair[0]];
+            const endCircle = circles[pair[1]];
+            if (!startCircle || !endCircle) return;
+
+            const points = this.getFusiformPoints(
+                { x: startCircle.left, y: startCircle.top },
+                { x: endCircle.left, y: endCircle.top }
+            );
+
+            const line = new fabric.Polygon(points, {
+                fill: startCircle.fill.replace("rgb", "rgba").replace(")", ", 0.7)"),
+                strokeWidth: 0,
+                selectable: false,
+                evented: false,
+                originX: 'center',
+                originY: 'center',
+                _startCircle: startCircle,
+                _endCircle: endCircle,
+                _poseId: currentPoseId
+            });
+
+            lines.push(line);
         });
 
-        circles[i] = circle;
-    }
+        this.canvas.add(...lines, ...Object.values(circles));
 
-    connections.forEach((pair) => {
-        const startCircle = circles[pair[0]];
-        const endCircle = circles[pair[1]];
-        if (!startCircle || !endCircle) return;
-
-        const points = this.getFusiformPoints(
-            { x: startCircle.left, y: startCircle.top },
-            { x: endCircle.left, y: endCircle.top }
-        );
-
-        const line = new fabric.Polygon(points, {
-            fill: startCircle.fill.replace("rgb", "rgba").replace(")", ", 0.6)"),
-            strokeWidth: 0,
-            selectable: false,
-            evented: false,
-            originX: 'center',
-            originY: 'center',
-            _startCircle: startCircle,
-            _endCircle: endCircle,
-            _poseId: currentPoseId,
-            _type: type // 标记连线的类型
-        });
-        lines.push(line);
-    });
-
-    // 核心修正：先加线，后加点，确保点在顶层
-    if (lines.length > 0) this.canvas.add(...lines);
-    const circleObjs = Object.values(circles);
-    if (circleObjs.length > 0) {
-        this.canvas.add(...circleObjs);
-        // 强制所有点同步物理坐标并置顶
-        circleObjs.forEach(c => {
-            c.setCoords();
-            c.bringToFront();
+        return new Promise(resolve => {
+            setTimeout(() => {
+                this.canvas.requestRenderAll();
+                resolve();
+            }, 0);
         });
     }
-
-    return new Promise(resolve => {
-        requestAnimationFrame(() => {
-            this.canvas.requestRenderAll();
-            resolve();
-        });
-    });
-}
 async setPose(people) {
-    if (!people || people.length === 0) return;
+        const tempBackgroundImage = this.canvas.backgroundImage;
+        this.canvas.clear();
+        this.canvas.backgroundImage = tempBackgroundImage;
+        this.canvas.backgroundColor = "#000";
+        this.nextPoseId = 0;
 
-    const tempBackgroundImage = this.canvas.backgroundImage;
+        const posePromises = [];
 
-    // 1. 停止所有正在进行的渲染，防止移动时的冲突
-    this.canvas.discardActiveObject();
-    this.canvas.clear();
+        people.forEach(person => {
+            const pid = this.nextPoseId++; // 每个人分配唯一 ID
 
-    this.canvas.backgroundImage = tempBackgroundImage;
-    this.canvas.backgroundColor = "#000";
-    this.nextPoseId = 0;
+            // 1. 绘制身体
+            posePromises.push(this.addPose(person.pose_keypoints_2d || [], pid, "body"));
 
-    // 2. 使用快照防止异步数据漂移
-    const peopleData = JSON.parse(JSON.stringify(people));
-    const posePromises = [];
+            // 2. 绘制左手
+            if (person.hand_left_keypoints_2d && person.hand_left_keypoints_2d.length > 0) {
+                posePromises.push(this.addPose(person.hand_left_keypoints_2d, pid, "left_hand"));
+            }
 
-    peopleData.forEach(person => {
-        const pid = this.nextPoseId++;
+            // 3. 绘制右手
+            if (person.hand_right_keypoints_2d && person.hand_right_keypoints_2d.length > 0) {
+                posePromises.push(this.addPose(person.hand_right_keypoints_2d, pid, "right_hand"));
+            }
 
-        // 身体
-        const bodyData = person.body || person.pose_keypoints_2d || [];
-        posePromises.push(this.addPose(bodyData, pid, "body"));
+            // 4. 绘制面部
+            if (person.face_keypoints_2d && person.face_keypoints_2d.length > 0) {
+                posePromises.push(this.addPose(person.face_keypoints_2d, pid, "face"));
+            }
+        });
 
-        // 左手
-        const leftHandData = person.left_hand || person.hand_left_keypoints_2d;
-        if (leftHandData && leftHandData.length > 0) {
-            posePromises.push(this.addPose(leftHandData, pid, "left_hand"));
-        }
+        await Promise.all(posePromises);
 
-        // 右手
-        const rightHandData = person.right_hand || person.hand_right_keypoints_2d;
-        if (rightHandData && rightHandData.length > 0) {
-            posePromises.push(this.addPose(rightHandData, pid, "right_hand"));
-        }
-
-        // 脸部
-        const faceData = person.face || person.face_keypoints_2d;
-        if (faceData && faceData.length > 0) {
-            posePromises.push(this.addPose(faceData, pid, "face"));
-        }
-    });
-
-    await Promise.all(posePromises);
-
-    // 3. 优化锁定逻辑：增加对手部的单独层级管理
-    this.canvas.getObjects().forEach(obj => {
-        if (obj.type === 'polygon') {
-            obj.set({
+        // 统一锁定所有连线
+        this.canvas.getObjects('polygon').forEach(line => {
+            line.set({
                 selectable: false,
                 evented: false,
                 lockMovementX: true,
                 lockMovementY: true,
-                hasControls: false
+                lockRotation: true,
+                lockScalingX: true,
+                lockScalingY: true,
+                lockSkewingX: true,
+                lockSkewingY: true,
+                hasControls: false,
+                hasBorders: false
             });
-        }
-        // 关键：确保点位坐标在 Fabric 内部同步
-        obj.setCoords();
-    });
+        });
 
-    this.canvas.requestRenderAll();
-
-    // 🚨 极其关键：只有当数据真正发生改变且不是在“拖拽中”才保存
-    if (!this.canvas._isDragging) {
+        this.canvas.getObjects().forEach(obj => obj.setCoords());
+        this.canvas.renderAll();
         this.saveToNode();
     }
-}
     calcResolution(width, height) {
         const viewportWidth = window.innerWidth / 2.25;
         const viewportHeight = window.innerHeight * 0.75;
@@ -1221,170 +1168,169 @@ async setPose(people) {
   // --- 核心逻辑替换区：请替换原文件中 initCanvas 到 captureCanvasCombined 之间的部分 ---
 
 initCanvas(elem) {
-        const canvas = new fabric.Canvas(elem, {
-            backgroundColor: '#000',
-            preserveObjectStacking: true,
-            selection: true,
-            fireRightClick: true,
-            stopContextMenu: true
-        });
+    const canvas = new fabric.Canvas(elem, {
+        backgroundColor: '#000',
+        preserveObjectStacking: true,
+        selection: true,
+        fireRightClick: true,
+        stopContextMenu: true
+    });
 
-        // 1. 强制禁用右键菜单，防止干扰拖拽
-        const disableMenu = (e) => { e.preventDefault(); return false; };
-        if (canvas.wrapperEl) canvas.wrapperEl.addEventListener('contextmenu', disableMenu);
-        canvas.upperCanvasEl.addEventListener('contextmenu', disableMenu);
+    // 1. 强制禁用右键菜单，防止干扰拖拽
+    const disableMenu = (e) => { e.preventDefault(); return false; };
+    if (canvas.wrapperEl) canvas.wrapperEl.addEventListener('contextmenu', disableMenu);
+    canvas.upperCanvasEl.addEventListener('contextmenu', disableMenu);
 
-        // --- 内部状态变量 ---
-        let isDragging = false;
-        let lastPosX, lastPosY;
-        let wasSelectionEnabled = true;
+    // --- 内部状态变量 ---
+    let isDragging = false;
+    let lastPosX, lastPosY;
+    let wasSelectionEnabled = true;
 
-        // 2. 缩放逻辑 (支持 CSS Transform 修正)
-        canvas.on('mouse:wheel', (opt) => {
-            const delta = opt.e.deltaY;
-            let zoom = canvas.getZoom() * (0.999 ** delta);
-            zoom = Math.min(Math.max(zoom, 0.1), 20);
+    // 2. 缩放逻辑 (支持 CSS Transform 修正)
+    canvas.on('mouse:wheel', (opt) => {
+        const delta = opt.e.deltaY;
+        let zoom = canvas.getZoom() * (0.999 ** delta);
+        zoom = Math.min(Math.max(zoom, 0.1), 20);
 
-            const rect = canvas.getElement().getBoundingClientRect();
-            if (rect.width > 0) {
-                const x = (opt.e.clientX - rect.left) * (canvas.width / rect.width);
-                const y = (opt.e.clientY - rect.top) * (canvas.height / rect.height);
-                canvas.zoomToPoint({ x, y }, zoom);
-            }
-            opt.e.preventDefault();
-            opt.e.stopPropagation();
-        });
+        const rect = canvas.getElement().getBoundingClientRect();
+        if (rect.width > 0) {
+            const x = (opt.e.clientX - rect.left) * (canvas.width / rect.width);
+            const y = (opt.e.clientY - rect.top) * (canvas.height / rect.height);
+            canvas.zoomToPoint({ x, y }, zoom);
+        }
+        opt.e.preventDefault();
+        opt.e.stopPropagation();
+    });
 
-        // 3. 拖拽逻辑 (修正：仅中键或 Alt+左键 触发拖拽，保留右键用于菜单或其它)
-        const handleDragStart = (e) => {
-            if (e.altKey || e.button === 1) {
-                isDragging = true;
-                wasSelectionEnabled = canvas.selection;
-                canvas.selection = false;
-                lastPosX = e.clientX;
-                lastPosY = e.clientY;
-                canvas.setCursor('grabbing');
-                e.preventDefault();
-            }
-        };
-        canvas.upperCanvasEl.addEventListener('mousedown', handleDragStart);
-
-        canvas.on('mouse:move', (opt) => {
-            if (!isDragging) return;
-            const e = opt.e;
-            const vpt = canvas.viewportTransform;
-            const rect = canvas.getElement().getBoundingClientRect();
-            const scaleX = canvas.width / rect.width;
-            const scaleY = canvas.height / rect.height;
-
-            vpt[4] += (e.clientX - lastPosX) * scaleX;
-            vpt[5] += (e.clientY - lastPosY) * scaleY;
-            canvas.requestRenderAll();
+    // 3. 拖拽逻辑 (修正：仅中键或 Alt+左键 触发拖拽，保留右键用于菜单或其它)
+    const handleDragStart = (e) => {
+        if (e.altKey || e.button === 1) {
+            isDragging = true;
+            wasSelectionEnabled = canvas.selection;
+            canvas.selection = false;
             lastPosX = e.clientX;
             lastPosY = e.clientY;
-        });
+            canvas.setCursor('grabbing');
+            e.preventDefault();
+        }
+    };
+    canvas.upperCanvasEl.addEventListener('mousedown', handleDragStart);
 
-        const handleDragEnd = () => {
-            if (isDragging) {
-                canvas.setViewportTransform(canvas.viewportTransform);
-                isDragging = false;
-                canvas.selection = wasSelectionEnabled;
-                canvas.setCursor('default');
+    canvas.on('mouse:move', (opt) => {
+        if (!isDragging) return;
+        const e = opt.e;
+        const vpt = canvas.viewportTransform;
+        const rect = canvas.getElement().getBoundingClientRect();
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+
+        vpt[4] += (e.clientX - lastPosX) * scaleX;
+        vpt[5] += (e.clientY - lastPosY) * scaleY;
+        canvas.requestRenderAll();
+        lastPosX = e.clientX;
+        lastPosY = e.clientY;
+    });
+
+    const handleDragEnd = () => {
+        if (isDragging) {
+            canvas.setViewportTransform(canvas.viewportTransform);
+            isDragging = false;
+            canvas.selection = wasSelectionEnabled;
+            canvas.setCursor('default');
+        }
+    };
+    canvas.on('mouse:up', handleDragEnd);
+    window.addEventListener('mouseup', handleDragEnd); // 防止鼠标滑出画布
+
+    // 4. 关键点连线同步 (合并后的高效逻辑)
+    canvas.on('object:moving', (e) => {
+        const target = e.target;
+        if (!target || target.type !== 'circle') return;
+
+        // 统一更新所有受影响的连线
+        canvas.getObjects('polygon').forEach(poly => {
+            if (poly._startCircle === target || poly._endCircle === target) {
+                // 使用 getCenterPoint 确保无论缩放多少，连线永远对齐圆心
+                const points = this.getFusiformPoints(
+                    poly._startCircle.getCenterPoint(),
+                    poly._endCircle.getCenterPoint()
+                );
+                poly.set({ points }).setCoords();
             }
-        };
-        canvas.on('mouse:up', handleDragEnd);
-        window.addEventListener('mouseup', handleDragEnd);
+        });
+    });
 
-         // --- 核心修复区：4. 关键点连线同步 ---
+    // 5. 选区过滤 (防止误选不可选的连线)
+    canvas.on('selection:created', (e) => {
+        const selection = e.target;
+        if (selection.type === 'activeSelection') {
+            const selectable = selection.getObjects().filter(obj => obj.selectable);
+            if (selectable.length < selection.size()) {
+                canvas.discardActiveObject();
+                if (selectable.length > 1) {
+                    canvas.setActiveObject(new fabric.ActiveSelection(selectable, { canvas }));
+                } else if (selectable.length === 1) {
+                    canvas.setActiveObject(selectable[0]);
+                }
+            }
+        }
+    });
 
-        // 恢复原版：仅在移动单点时，实时更新连线
-        const updateLines = (target) => {
-            // 魔法1：如果是多选组(activeSelection)，直接跳过实时更新，避免错乱
-            if (!target || target.type !== 'circle') return;
+    // 6. 核心修改监听：集成你的 undo_history
+    canvas.on("object:modified", (e) => {
+        if (this.lockMode || !e.target) return;
 
-            canvas.getObjects('polygon').forEach(polygon => {
-                if (polygon._startCircle === target || polygon._endCircle === target) {
-                    const start = polygon._startCircle.getCenterPoint();
-                    const end = polygon._endCircle.getCenterPoint();
-                    const newPoints = this.getFusiformPoints(start, end);
-                    polygon.set({ points: newPoints });
-                    polygon.setCoords();
+        // 处理批量移动时的坐标同步
+        if (e.target.type === 'activeSelection') {
+            const matrix = e.target.calcTransformMatrix();
+            e.target.forEachObject(obj => {
+                if (obj.type === 'circle') {
+                    const pos = fabric.util.transformPoint(new fabric.Point(obj.left, obj.top), matrix);
+                    obj.set({ left: pos.x, top: pos.y }).setCoords();
                 }
             });
-        };
+        }
 
-        // 仅在移动时触发
-        canvas.on('object:moving', (e) => updateLines(e.target));
+        // 保存历史记录 (对应你原代码的撤销功能)
+        const currentStateJson = this.serializeJSON();
+        this.undo_history.push(currentStateJson); // 保护：保留你的历史记录栈
+        this.redo_history.length = 0;              // 清空重做栈
 
-        // 5. 选区过滤 (防止误选不可选的连线)
-        canvas.on('selection:created', (e) => {
-            const selection = e.target;
-            if (selection.type === 'activeSelection') {
-                const selectableObjects = selection.getObjects().filter(obj => obj.selectable);
-                if (selectableObjects.length < selection.size()) {
-                    canvas.discardActiveObject();
-                    if (selectableObjects.length > 1) {
-                        const correctSelection = new fabric.ActiveSelection(selectableObjects, { canvas: canvas });
-                        canvas.setActiveObject(correctSelection);
-                    } else if (selectableObjects.length === 1) {
-                        canvas.setActiveObject(selectableObjects[0]);
-                    }
-                }
-            }
+        this.saveToNode(); // 同步到 ComfyUI 节点
+    });
+
+    this.canvas = canvas;
+    return canvas;
+}
+
+// --- 截图方法优化 (支持 viewport 恢复) ---
+
+async captureCanvasClean() {
+    this.lockMode = true;
+    const originalVpt = [...this.canvas.viewportTransform];
+    this.canvas.viewportTransform = [1, 0, 0, 1, 0, 0]; // 强制 1:1 截图
+
+    const bg = this.canvas.backgroundImage;
+    const opacities = new Map();
+
+    try {
+        if (bg) bg.visible = false;
+        this.canvas.getObjects("image").forEach(img => {
+            opacities.set(img, img.opacity);
+            img.opacity = 0;
         });
 
-// 6. 核心监听：只在松手时触发一次“绝对同步”
-canvas.on("object:modified", (e) => {
-    if (this.lockMode || !e.target) return;
-
-    const target = e.target;
-
-    // 1. 处理全选移动 (ActiveSelection)
-    if (target.type === 'activeSelection') {
-        // 关键：Fabric 在 ActiveSelection 模式下，子对象的 left/top 是相对中心的偏移
-        // 我们必须先将它们“拍平”回 Canvas 的绝对像素坐标
-        target.setCoords();
-        const objects = target.getObjects();
-
-        objects.forEach(obj => {
-            if (obj.type === 'circle') {
-                // 魔法函数：getCenterPoint() 会自动计算所有 group/scale 变换
-                // 拿到的是该点在 1:1 像素画布上的真实位置
-                const absoluteCenter = obj.getCenterPoint();
-                obj.set({
-                    left: absoluteCenter.x,
-                    top: absoluteCenter.y,
-                });
-                // 彻底断开与组的关联
-                obj.set("group", null);
-                obj.setCoords();
-            }
-        });
-
-        // 2. 暴力销毁选择框。这是解决“漂移”的特效药
-        // 只有销毁了 Selection，Fabric 才会停止把“缩放偏量”应用到对象上
-        canvas.discardActiveObject();
-    } else {
-        target.setCoords();
+        this.canvas.discardActiveObject().renderAll();
+        const dataURL = this.canvas.toDataURL({ multiplier: 1, format: 'png' });
+        return dataURLToBlob(dataURL);
+    } finally {
+        if (bg) bg.visible = true;
+        this.canvas.getObjects("image").forEach(img => img.opacity = opacities.get(img) || 1);
+        this.canvas.viewportTransform = originalVpt;
+        this.canvas.renderAll();
+        this.lockMode = false;
     }
-
-    // 3. 此时 Canvas 上的所有 Circle 已经拥有了正确的像素坐标
-    // 我们直接执行 serialize -> load 闭环重绘
-    // 这样纺锤线会根据最新的像素坐标重新生成，由于 Key 名对齐 DWPose，手部不会消失
-    const poseJson = this.serializeJSON();
-    this.loadJSON(poseJson);
-
-    // 4. 同步给 ComfyUI 后端
-    this.saveToNode();
-    this.canvas.requestRenderAll();
-
-    console.log(">>> [绝对坐标同步] 漂移已修正，坐标已根据 1:1 画布像素拍平");
-});
-
-
-return canvas;
-    } // <-- 这里正确闭合 initCanvas 方法
-
+}
 
     saveToNode() {
         const newPoseJson = this.serializeJSON();
@@ -1557,75 +1503,63 @@ return canvas;
     }
 
 serializeJSON() {
-    if (!this.canvas) return "";
+        const originalViewportTransform = this.canvas.viewportTransform;
+        this.canvas.viewportTransform = [1, 0, 0, 1, 0, 0];
 
-    // 重置视口，确保 getCenterPoint 获取的是不受 transform 影响的画布绝对坐标
-    const originalViewportTransform = this.canvas.viewportTransform;
-    this.canvas.viewportTransform = [1, 0, 0, 1, 0, 0];
+        const allCircles = this.canvas.getObjects('circle');
+        const poses = {};
 
-    const allCircles = this.canvas.getObjects('circle');
-    const poses = {};
+        allCircles.forEach(circle => {
+            const poseId = circle._poseId; // 确保使用这个变量名
+            if (!poses[poseId]) {
+                poses[poseId] = {
+                    body: new Array(18 * 3).fill(0),
+                    left_hand: new Array(21 * 3).fill(0),
+                    right_hand: new Array(21 * 3).fill(0),
+                    face: new Array(70 * 3).fill(0)
+                };
+            }
 
-    allCircles.forEach(circle => {
-        const poseId = circle._poseId;
-        if (typeof poseId === 'undefined' || poseId === null) return;
+            const center = circle.getCenterPoint();
+            const type = circle._type || "body";
+            const idx = circle._id * 3;
 
-        if (!poses[poseId]) {
-            poses[poseId] = {
-                body: new Array(18 * 3).fill(0),
-                left_hand: new Array(21 * 3).fill(0),
-                right_hand: new Array(21 * 3).fill(0),
-                face: new Array(70 * 3).fill(0)
-            };
-        }
+            // 修复点：将 pid 全部改为 poseId
+            let targetArr;
+            if (type === "body") targetArr = poses[poseId].body;
+            else if (type === "left_hand") targetArr = poses[poseId].left_hand;
+            else if (type === "right_hand") targetArr = poses[poseId].right_hand;
+            else if (type === "face") targetArr = poses[poseId].face;
 
-        // 使用 getCenterPoint 确保获取的是不受 transform 影响的绝对中心像素坐标
-        const center = circle.getCenterPoint();
-        const type = circle._type || "body";
-        const idx = circle._id * 3;
-
-        // 统一 Key 名映射到 DWPose 的 4 个核心字段
-        let targetArr = null;
-        if (type === "body") targetArr = poses[poseId].body;
-        else if (type === "left_hand") targetArr = poses[poseId].left_hand;
-        else if (type === "right_hand") targetArr = poses[poseId].right_hand;
-        else if (type === "face") targetArr = poses[poseId].face;
-
-        if (targetArr && idx < targetArr.length) {
-            targetArr[idx] = Math.round(center.x);
-            targetArr[idx + 1] = Math.round(center.y);
-            targetArr[idx + 2] = 1.0; // 只要点在画布上，置信度就给满
-        }
-    });
-
-    const people = [];
-    Object.keys(poses).sort((a,b)=>a-b).forEach(pid => {
-        const p = poses[pid];
-
-        // 辅助判定某个部位是否有有效数据
-        const hasData = (arr) => arr && arr.some(v => v !== 0);
-
-        people.push({
-            // --- 统一输出标准字段名，完美适配 loadJSON 的字段寻找逻辑 ---
-            "pose_keypoints_2d": p.body,
-            "hand_left_keypoints_2d": hasData(p.left_hand) ? p.left_hand : null,
-            "hand_right_keypoints_2d": hasData(p.right_hand) ? p.right_hand : null,
-            "face_keypoints_2d": hasData(p.face) ? p.face : null
+            if (targetArr) {
+                targetArr[idx] = Math.round(center.x);
+                targetArr[idx + 1] = Math.round(center.y);
+                targetArr[idx + 2] = 1.0;
+            }
         });
-    });
 
-    // 按照 DWPose 官方标准构造最终 JSON，输出 canvas_width 以防止漂移
-    const json = JSON.stringify({
-        "width": Math.round(this.canvas.width),
-        "height": Math.round(this.canvas.height),
-        "canvas_width": Math.round(this.canvas.width),
-        "canvas_height": Math.round(this.canvas.height),
-        "people": people
-    }, null, 4);
+        const people = [];
+        Object.keys(poses).sort((a, b) => a - b).forEach(poseId => {
+            const p = poses[poseId];
+            // 构造符合后端插件要求的标准格式
+            people.push({
+                "pose_keypoints_2d": p.body,
+                "face_keypoints_2d": p.face.some(v => v !== 0) ? p.face : null,
+                "hand_left_keypoints_2d": p.left_hand.some(v => v !== 0) ? p.left_hand : null,
+                "hand_right_keypoints_2d": p.right_hand.some(v => v !== 0) ? p.right_hand : null
+            });
+        });
 
-    this.canvas.viewportTransform = originalViewportTransform;
-    return json;
-}
+        const json = JSON.stringify({
+            "width": Math.round(this.canvas.width),
+            "height": Math.round(this.canvas.height),
+            "people": people
+        }, null, 4);
+
+        this.canvas.viewportTransform = originalViewportTransform;
+        return json;
+    }
+
     async loadBackgroundImage(e) {
         const file = e.target.files[0];
         if (!file) return;
@@ -1683,73 +1617,82 @@ serializeJSON() {
     }
 
 loadJSON(text) {
-    if (!text) return "Empty data";
+        try {
+            const json = JSON.parse(text);
 
-    try {
-        // 1. 深度克隆数据，防止原地修改导致的第二次运行逻辑错误
-        const rawJson = typeof text === 'string' ? JSON.parse(text) : text;
-        const json = JSON.parse(JSON.stringify(rawJson));
+            if (!json["width"] || !json["height"]) {
+                return 'JSON is missing width or height properties.';
+            }
+            this.resizeCanvas(json["width"], json["height"]);
 
-        // 2. 增强型尺寸读取
-        const width = json.canvas_width || json.width || (this.canvas ? this.canvas.width : 512);
-        const height = json.canvas_height || json.height || (this.canvas ? this.canvas.height : 512);
+            const people = json["people"] || [];
 
-        this.resizeCanvas(width, height);
-
-        const people = json.people || [];
-
-        // 3. 智能坐标转换与字段对齐
-        people.forEach(person => {
-            // 模糊匹配：只要包含这些关键字的 Key 都处理
-            const allKeys = Object.keys(person);
-            allKeys.forEach(key => {
-                if (key.includes("keypoints_2d") || key === "body" || key === "face" || key.includes("hand")) {
-                    const kpts = person[key];
-                    if (Array.isArray(kpts) && kpts.length > 0) {
-
-                        // 改进的相对坐标判定：检查前 10 个有效点
-                        let isRelative = false;
-                        for (let i = 0; i < Math.min(kpts.length, 30); i += 3) {
-                            const x = kpts[i];
-                            const y = kpts[i+1];
-                            const conf = kpts[i+2];
-                            // 只要有一个置信度大于 0 且坐标在 0-1.1 之间的点，就认为是相对坐标
-                            if (conf > 0 && x > 0 && x <= 1.1 && y > 0 && y <= 1.1) {
-                                isRelative = true;
-                                break;
-                            }
-                        }
-
-                        if (isRelative) {
-                            for (let i = 0; i < kpts.length; i += 3) {
-                                kpts[i] *= width;
-                                kpts[i + 1] *= height;
-                            }
+            // 1. 收集所有部位的关键点用于范围检测
+            let allKeypointsForCheck = [];
+            people.forEach(person => {
+                // 检查所有可能的关键点字段
+                ["pose_keypoints_2d", "hand_left_keypoints_2d", "hand_right_keypoints_2d", "face_keypoints_2d"].forEach(key => {
+                    const kpts = person[key] || [];
+                    for (let i = 0; i < kpts.length; i += 3) {
+                        if (kpts[i + 2] > 0) {
+                            allKeypointsForCheck.push([kpts[i], kpts[i + 1]]);
                         }
                     }
-                }
+                });
             });
-        });
 
-        // 4. 强制重置渲染状态并调用渲染
-        if (this.canvas) {
-            this.canvas.discardActiveObject();
-            // 在这里调用 setPose
+            // 2. 自动居中逻辑（如果关键点全部在画布外）
+            if (allKeypointsForCheck.length > 0) {
+                let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+                allKeypointsForCheck.forEach(pt => {
+                    if (pt[0] < minX) minX = pt[0];
+                    if (pt[0] > maxX) maxX = pt[0];
+                    if (pt[1] < minY) minY = pt[1];
+                    if (pt[1] > maxY) maxY = pt[1];
+                });
+
+                const canvasWidth = this.canvas.getWidth();
+                const canvasHeight = this.canvas.getHeight();
+
+                // 如果检测到所有点都在画布外，进行偏移补偿
+                if (maxX < 0 || minX > canvasWidth || maxY < 0 || minY > canvasHeight) {
+                    const poseWidth = maxX - minX;
+                    const poseHeight = maxY - minY;
+                    const offsetX = -minX + (canvasWidth - poseWidth) / 2;
+                    const offsetY = -minY + (canvasHeight - poseHeight) / 2;
+
+                    people.forEach(person => {
+                        // 同步偏移所有部位
+                        ["pose_keypoints_2d", "hand_left_keypoints_2d", "hand_right_keypoints_2d", "face_keypoints_2d"].forEach(key => {
+                            const kpts = person[key] || [];
+                            for (let i = 0; i < kpts.length; i += 3) {
+                                if (kpts[i + 2] > 0) {
+                                    kpts[i] += offsetX;
+                                    kpts[i + 1] += offsetY;
+                                }
+                            }
+                        });
+                    });
+                }
+            }
+
+            // 3. 将处理好的完整数据传给 setPose
             this.setPose(people);
-        }
 
-        // 5. 恢复过滤器
-        if (this.poseFilterInput) {
-            const idx = parseInt(this.poseFilterInput.value, 10);
-            if (!isNaN(idx)) this.applyPoseFilter(idx);
-        }
+            // 4. 恢复过滤器状态
+            if (this.poseFilterInput) {
+                const currentFilterIndex = parseInt(this.poseFilterInput.value, 10);
+                if (!isNaN(currentFilterIndex)) {
+                    this.applyPoseFilter(currentFilterIndex);
+                }
+            }
 
-        return null;
-    } catch (e) {
-        console.error("loadJSON 优化版运行失败:", e);
-        return `Failed to parse JSON: ${e.message}`;
+            return null;
+        } catch (e) {
+            return `Failed to parse JSON: ${e.message}`;
+        }
     }
-}
+
 }
 
 app.registerExtension({
