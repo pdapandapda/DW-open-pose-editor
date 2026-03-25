@@ -1601,7 +1601,7 @@ serializeJSON() {
 
         if (!poses[poseId]) {
             poses[poseId] = {
-                body: new Array(18 * 3).fill(0),
+                body: new Array(25 * 3).fill(0),
                 left_hand: new Array(21 * 3).fill(0),
                 right_hand: new Array(21 * 3).fill(0),
                 face: new Array(70 * 3).fill(0)

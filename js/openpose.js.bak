@@ -985,25 +985,38 @@ addPose(keypoints = [], poseId = null, type = "body") {
         radius = 1.5;
     }
 
-for (let i = 0; i < keypoints.length / 3; i++) {
+    for (let i = 0; i < keypoints.length / 3; i++) {
         const x = Number(keypoints[i * 3]);
         const y = Number(keypoints[i * 3 + 1]);
         let confidence = Number(keypoints[i * 3 + 2]);
 
-        // --- 钢铁防线：容差拦截 ---
-        
-        // 1. 拦截左上角 1 像素内的所有点（对付浮点数精度问题）
-        // 只要 x 和 y 都在 1 像素以内，无条件判定为 DWPose 生成的废弃点 (0,0)
-        if (Math.abs(x) < 1 && Math.abs(y) < 1) {
-            continue; 
+        // ==========================================
+        // 🚨 终极钢铁防线：过滤所有形态的“僵尸数据” 🚨
+        // ==========================================
+
+        // 1. 拦截未检测点标记 (-1, -1) 或 (-1, -1, 0)
+        // 只要 x 或 y 其中一个是 -1 (允许一定浮点误差)，直接抛弃！
+        if (x <= 0 && y <= 0 && confidence === 1) {
+            continue;
+        }
+        if (Math.abs(x + 1) < 0.1 || Math.abs(y + 1) < 0.1) {
+            continue;
         }
 
-        // 2. 拦截 NaN 和明确的低置信度噪点
+        // 2. 拦截绝对的 (0,0) 原点标记 (应对面部数组后半段的 0,0,0)
+        // 正常肢体绝对不会出现在距离原点不到 1 像素的地方
+        if (Math.abs(x) < 1 && Math.abs(y) < 1) {
+            continue;
+        }
+
+        // 3. 拦截 NaN 和低置信度 (应对极端噪点)
         if (isNaN(x) || isNaN(y) || (!isNaN(confidence) && confidence < 0.05)) {
             continue;
         }
 
-        // 通过安检的，强行给满置信度
+        // ==========================================
+
+        // 存活下来的点，给满置信度以保稳定
         confidence = 1.0;
 
         const colorArr = (type === "body" && connect_color[i]) ? connect_color[i] : baseColor;
