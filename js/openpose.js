@@ -986,13 +986,38 @@ addPose(keypoints = [], poseId = null, type = "body") {
     }
 
     for (let i = 0; i < keypoints.length / 3; i++) {
-        const x = keypoints[i * 3];
-        const y = keypoints[i * 3 + 1];
-        let confidence = keypoints[i * 3 + 2];
+        const x = Number(keypoints[i * 3]);
+        const y = Number(keypoints[i * 3 + 1]);
+        let confidence = Number(keypoints[i * 3 + 2]);
 
-        // 预防措施：坐标为0通常是无效点
-        if (x === 0 && y === 0) continue;
-        if (typeof confidence === 'undefined' || confidence <= 0) confidence = 1.0;
+        // ==========================================
+        // 🚨 终极钢铁防线：过滤所有形态的“僵尸数据” 🚨
+        // ==========================================
+
+        // 1. 拦截未检测点标记 (-1, -1) 或 (-1, -1, 0)
+        // 只要 x 或 y 其中一个是 -1 (允许一定浮点误差)，直接抛弃！
+        if (x <= 0 && y <= 0 && confidence === 1) {
+            continue;
+        }
+        if (Math.abs(x + 1) < 0.1 || Math.abs(y + 1) < 0.1) {
+            continue;
+        }
+
+        // 2. 拦截绝对的 (0,0) 原点标记 (应对面部数组后半段的 0,0,0)
+        // 正常肢体绝对不会出现在距离原点不到 1 像素的地方
+        if (Math.abs(x) < 1 && Math.abs(y) < 1) {
+            continue;
+        }
+
+        // 3. 拦截 NaN 和低置信度 (应对极端噪点)
+        if (isNaN(x) || isNaN(y) || (!isNaN(confidence) && confidence < 0.05)) {
+            continue;
+        }
+
+        // ==========================================
+
+        // 存活下来的点，给满置信度以保稳定
+        confidence = 1.0;
 
         const colorArr = (type === "body" && connect_color[i]) ? connect_color[i] : baseColor;
 
@@ -1015,6 +1040,10 @@ addPose(keypoints = [], poseId = null, type = "body") {
     connections.forEach((pair) => {
         const startCircle = circles[pair[0]];
         const endCircle = circles[pair[1]];
+        
+        // 自动断线保护：如果在上面的循环中某个废点被 continue 跳过了，
+        // 这里自然找不到对应的圆点对象，直接 return (在 forEach 中等同于 continue)，
+        // 从而完美阻止了飞向左上角的纺锤线生成。
         if (!startCircle || !endCircle) return;
 
         const points = this.getFusiformPoints(
