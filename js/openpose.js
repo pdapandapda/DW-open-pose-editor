@@ -12,16 +12,22 @@ function dataURLToBlob(dataurl) {
     return new Blob([u8arr], { type: mime });
 }
 
+// --- 核心修改 1：身体连线（增加脚部） ---
 const connect_keypoints = [
+    // 原本的 18 点身体主干连线
     [0, 1], [1, 2], [2, 3], [3, 4],
     [1, 5], [5, 6], [6, 7], [1, 8],
     [8, 9], [9, 10], [1, 11], [11, 12],
     [12, 13], [14, 0], [14, 16], [15, 0],
-    [15, 17]
+    [15, 17],
+    
+    // 🦶 新增：BODY_25 格式脚部连线
+    // 假设右脚踝是 10，左脚踝是 13
+    [10, 24], [10, 22], [22, 23], // 右脚: 脚踝连脚跟(24)和大脚趾(22)，大脚趾连小脚趾(23)
+    [13, 21], [13, 19], [19, 20]  // 左脚: 脚踝连脚跟(21)和大脚趾(19)，大脚趾连小脚趾(20)
 ];
-// --- 在约 25 行处添加 ---
 
-// 手部连接 (每只手 21 个点)
+// 手部连接 (保持不变)
 const hand_connections = [
     [0,1],[1,2],[2,3],[3,4], // 大拇指
     [0,5],[5,6],[6,7],[7,8], // 食指
@@ -30,29 +36,42 @@ const hand_connections = [
     [0,17],[17,18],[18,19],[19,20]  // 小拇指
 ];
 
-// 脚部连接 (左右脚各 3 个点，索引通常为 0,1,2)
-const foot_connections = [[0,1], [0,2]];
+// ⚠️ 注意：删除了 foot_connections，因为脚部已经合并到 connect_keypoints 里了！
 
-// 面部连线非常多（70个点），通常只画轮廓或只画点
-// 这里定义基本的眼、眉、口轮廓（简化版）
+// 面部连线 (保持不变)
 const face_connections = [
     [0,16], [17,21], [22,26], [27,30], [31,35], [36,41], [42,47], [48,67]
 ];
+
+// --- 核心修改 2：颜色扩充到 25 种 ---
 const connect_color = [
     [0, 0, 255], [255, 0, 0], [255, 170, 0], [255, 255, 0],
     [255, 85, 0], [170, 255, 0], [85, 255, 0], [0, 255, 0],
     [0, 255, 85], [0, 255, 170], [0, 255, 255], [0, 170, 255],
     [0, 85, 255], [85, 0, 255], [170, 0, 255], [255, 0, 255],
-    [255, 0, 170], [255, 0, 85]
+    [255, 0, 170], [255, 0, 85],
+    // 🦶 新增脚部的 7 根连线颜色
+    [85, 255, 170], [170, 255, 85], [255, 255, 170], [170, 255, 255],
+    [255, 170, 255], [85, 170, 255], [255, 85, 170]
 ];
 
+// --- 核心修改 3：默认骨架加上 7 个脚部点 ---
 const DEFAULT_KEYPOINTS = [
+    // 原本的 18 个点
     [241, 77], [241, 120], [191, 118], [177, 183],
     [163, 252], [298, 118], [317, 182], [332, 245],
     [225, 241], [213, 359], [215, 454], [270, 240],
     [282, 360], [286, 456], [232, 59], [253, 60],
-    [225, 70], [260, 72]
-]
+    [225, 70], [260, 72],
+    // 🦶 新增的 7 个点 (占位坐标，形成默认的脚部形状)
+    [282, 360], // 18 (占位，某些版本可能用作骨盆)
+    [270, 480], // 19 左大脚趾
+    [300, 480], // 20 左小脚趾
+    [286, 470], // 21 左脚跟
+    [200, 480], // 22 右大脚趾
+    [230, 480], // 23 右小脚趾
+    [215, 470]  // 24 右脚跟
+];
 
 async function readFileToText(file) {
     return new Promise((resolve, reject) => {
@@ -1362,52 +1381,98 @@ initCanvas(elem) {
             }
         });
 
-// 6. 核心监听：只在松手时触发一次“绝对同步”
+// 6. 核心监听：只在松手时触发一次“绝对同步”与“磁性吸附”
 canvas.on("object:modified", (e) => {
     if (this.lockMode || !e.target) return;
 
     const target = e.target;
+    const SNAP_DISTANCE = 15; // 🧲 吸附距离阈值（像素），你可以根据手感调大或调小
+    let movedCircles = [];    // 记录本次被鼠标移动的圆点
 
-    // 1. 处理全选移动 (ActiveSelection)
+    // 1. 处理全选移动 (ActiveSelection) 与单选移动，并收集移动点
     if (target.type === 'activeSelection') {
-        // 关键：Fabric 在 ActiveSelection 模式下，子对象的 left/top 是相对中心的偏移
-        // 我们必须先将它们“拍平”回 Canvas 的绝对像素坐标
         target.setCoords();
         const objects = target.getObjects();
 
         objects.forEach(obj => {
             if (obj.type === 'circle') {
-                // 魔法函数：getCenterPoint() 会自动计算所有 group/scale 变换
-                // 拿到的是该点在 1:1 像素画布上的真实位置
                 const absoluteCenter = obj.getCenterPoint();
                 obj.set({
                     left: absoluteCenter.x,
                     top: absoluteCenter.y,
                 });
-                // 彻底断开与组的关联
                 obj.set("group", null);
                 obj.setCoords();
+                movedCircles.push(obj); // 收集被拖动的点
             }
         });
-
-        // 2. 暴力销毁选择框。这是解决“漂移”的特效药
-        // 只有销毁了 Selection，Fabric 才会停止把“缩放偏量”应用到对象上
         canvas.discardActiveObject();
     } else {
         target.setCoords();
+        if (target.type === 'circle') {
+            movedCircles.push(target); // 收集单选拖动的点
+        }
     }
 
-    // 3. 此时 Canvas 上的所有 Circle 已经拥有了正确的像素坐标
-    // 我们直接执行 serialize -> load 闭环重绘
-    // 这样纺锤线会根据最新的像素坐标重新生成，由于 Key 名对齐 DWPose，手部不会消失
-    const poseJson = this.serializeJSON();
-    this.loadJSON(poseJson);
+// ==========================================
+    // 🧲 新增功能：判断并执行“磁性吸附” (动态精度版)
+    // ==========================================
+    if (movedCircles.length > 0) {
+        const allCircles = this.canvas.getObjects('circle');
 
-    // 4. 同步给 ComfyUI 后端
-    this.saveToNode();
-    this.canvas.requestRenderAll();
+        movedCircles.forEach(movedObj => {
+            let closestObj = null;
+            let minDistance = Infinity;
 
-    console.log(">>> [绝对坐标同步] 漂移已修正，坐标已根据 1:1 画布像素拍平");
+            // 🎯 核心优化：根据当前拖动的部位，动态决定吸附灵敏度
+            const type = movedObj._type || "body";
+            let currentSnapDist = 12; // 身体骨架较大，吸附距离给 12
+            if (type === "left_hand" || type === "right_hand") {
+                currentSnapDist = 6;  // 手指密集，距离缩小到 6
+            } else if (type === "face") {
+                currentSnapDist = 3;  // 面部极度密集，只有几乎完全重合(3px)才吸附
+            }
+
+            allCircles.forEach(otherObj => {
+                if (otherObj === movedObj) return;
+                if (movedCircles.includes(otherObj)) return;
+
+                const p1 = movedObj.getCenterPoint();
+                const p2 = otherObj.getCenterPoint();
+                const dist = Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2));
+
+                // 使用专属的 currentSnapDist 进行判定
+                if (dist < minDistance && dist <= currentSnapDist) {
+                    minDistance = dist;
+                    closestObj = otherObj;
+                }
+            });
+
+            if (closestObj) {
+                const targetCenter = closestObj.getCenterPoint();
+                movedObj.set({
+                    left: targetCenter.x,
+                    top: targetCenter.y
+                });
+                movedObj.setCoords();
+            }
+        });
+    }
+    // ==========================================
+
+    // 3. 此时 Canvas 上的所有 Circle 已经拥有了正确的像素坐标（如果有吸附，坐标已经完全重叠）
+    // 延迟 20ms 执行闭环重绘（强烈建议加个短暂延迟，让 Fabric 有时间把销毁的组清理干净，防止线条闪烁）
+    setTimeout(() => {
+        const poseJson = this.serializeJSON();
+
+        // 由于坐标重合，loadJSON 生成的新纺锤线会自动合二为一
+        this.loadJSON(poseJson);
+
+        this.saveToNode();
+        this.canvas.requestRenderAll();
+
+        console.log(">>> [绝对坐标同步 & 磁性吸附] 处理完成");
+    }, 20);
 });
 
 
