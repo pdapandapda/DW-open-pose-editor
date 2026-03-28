@@ -113,11 +113,23 @@ class OpenPosePanel {
 
     // 用于缓存上次的pose数据，避免重复更新
     lastPoseData = null;
-	getFusiformPoints(start, end) {
+    getFusiformPoints(start, end, type = "body") {
     const angle = Math.atan2(end.y - start.y, end.x - start.x);
     const distance = Math.sqrt(Math.pow(end.x - start.x, 2) + Math.pow(end.y - start.y, 2));
-    // 定义肢体厚度，通常为长度的 10%
-    const width = distance * 0.1;
+
+    // 1. 默认肢体厚度，通常为长度的 10%
+    let width = distance * 0.1;
+
+    // 2. 核心优化：根据部位动态限制线条厚度，防止 AI 生图时产生特征污染
+    if (type === "face") {
+        // 面部线条极细（设为0.5，总厚度约1像素）
+        // 这能彻底防止大模型把连接线当成面具、眼镜框或脸部胎记
+        width = 0.5;
+    } else if (type === "left_hand" || type === "right_hand") {
+        // 手部线条调细，并增加硬上限
+        // 防止距离略长时线条过粗，导致生图出现“手指粘连”或“鸭蹼”
+        width = Math.min(distance * 0.06, 1.8);
+    }
 
     return [
         { x: start.x, y: start.y },
@@ -952,34 +964,6 @@ this.panel.addButton("新增测试(含手)", () => {
         }
     }
 
-    getFusiformPoints(start, end) {
-        const dx = end.x - start.x;
-        const dy = end.y - start.y;
-        let length = Math.sqrt(dx * dx + dy * dy);
-        if (length === 0) length = 1; // 避免除零
-
-        // 中点
-        const midX = (start.x + end.x) / 2;
-        const midY = (start.y + end.y) / 2;
-
-        // 法向量 (Normalized): (-dy, dx)
-        const nx = -dy / length;
-        const ny = dx / length;
-
-        // 设定纺锤体最大宽度
-        // 可以是固定的，也可以根据长度动态调整（例如长度的 15%，但不超过 14px）
-        const maxWidth = 14;
-        // const calculatedWidth = Math.min(length * 0.15, maxWidth);
-        const halfWidth = maxWidth / 2;
-
-        // 生成四个顶点：起点 -> 侧边1 -> 终点 -> 侧边2
-        return [
-            { x: start.x, y: start.y },
-            { x: midX + nx * halfWidth, y: midY + ny * halfWidth },
-            { x: end.x, y: end.y },
-            { x: midX - nx * halfWidth, y: midY - ny * halfWidth }
-        ];
-    }
 
 addPose(keypoints = [], poseId = null, type = "body") {
     const currentPoseId = poseId !== null ? poseId : this.nextPoseId++;
@@ -993,15 +977,15 @@ addPose(keypoints = [], poseId = null, type = "body") {
     if (type === "left_hand") {
         connections = hand_connections;
         baseColor = [0, 255, 0];
-        radius = 3.2; // 稍微调大，防止看不见
+        radius = 2.0; // 稍微调大，防止看不见
     } else if (type === "right_hand") {
         connections = hand_connections;
         baseColor = [255, 0, 0];
-        radius = 3.2;
+        radius = 2.0;
     } else if (type === "face") {
         connections = face_connections;
         baseColor = [255, 255, 255];
-        radius = 1.5;
+        radius = 0.8;// 💡 核心修改：从 1.5 降到 0.8（只留一个极微小的点）
     }
 
     for (let i = 0; i < keypoints.length / 3; i++) {
@@ -1067,7 +1051,8 @@ addPose(keypoints = [], poseId = null, type = "body") {
 
         const points = this.getFusiformPoints(
             { x: startCircle.left, y: startCircle.top },
-            { x: endCircle.left, y: endCircle.top }
+            { x: endCircle.left, y: endCircle.top },
+            type // <--- 补充这个参数
         );
 
         const line = new fabric.Polygon(points, {
@@ -1354,7 +1339,7 @@ initCanvas(elem) {
                 if (polygon._startCircle === target || polygon._endCircle === target) {
                     const start = polygon._startCircle.getCenterPoint();
                     const end = polygon._endCircle.getCenterPoint();
-                    const newPoints = this.getFusiformPoints(start, end);
+                    const newPoints = this.getFusiformPoints(start, end, polygon._type);
                     polygon.set({ points: newPoints });
                     polygon.setCoords();
                 }
