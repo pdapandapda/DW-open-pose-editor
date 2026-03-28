@@ -68,8 +68,8 @@ const DEFAULT_KEYPOINTS = [
     [270, 480], // 19 左大脚趾
     [300, 480], // 20 左小脚趾
     [286, 470], // 21 左脚跟
-    [200, 480], // 22 右大脚趾
-    [230, 480], // 23 右小脚趾
+    [230, 480], // 22 右大脚趾
+    [200, 480], // 23 右小脚趾
     [215, 470]  // 24 右脚跟
 ];
 
@@ -720,6 +720,24 @@ this.panel.addButton("新增测试(含手)", () => {
             this.saveToNode();
         });
 
+        // ================= 👇 把这 3 行新按钮追加在这里 👇 =================
+        this.panel.addButton("完全体角色", () => {
+            this.resetCanvas();
+            this.syncDimensionsToNode();
+            const pid = this.nextPoseId++;
+            const body = [];
+            DEFAULT_KEYPOINTS.forEach(pt => body.push(pt[0], pt[1], 1.0));
+            this.addPose(body, pid, "body");
+            const rWrist = DEFAULT_KEYPOINTS[4];
+            const lWrist = DEFAULT_KEYPOINTS[7];
+            this.addPose(this.generateStandardHandData(rWrist[0], rWrist[1], false), pid, "right_hand");
+            this.addPose(this.generateStandardHandData(lWrist[0], lWrist[1], true), pid, "left_hand");
+            this.saveToNode();
+        });
+        this.panel.addButton("加双手", () => this.addHandsToSelection());
+        this.panel.addButton("加双脚", () => this.addFeetToSelection());
+        // ================= 👆 新按钮结束 👆 =================
+
         this.panel.addButton("删点", () => { this.deleteSelectedPoints(); this.saveToNode(); });
         this.panel.addButton("清空", () => { this.removeFilteredPose(); this.saveToNode(); });
         this.panel.addButton("重置", () => {
@@ -964,7 +982,172 @@ this.panel.addButton("新增测试(含手)", () => {
         }
     }
 
+    // ================= 👇 新增的 3 个处理函数粘贴在这里 👇 =================
 
+    generateStandardHandData(baseX, baseY, isLeft = false) {
+        const hand = new Array(21 * 3).fill(0);
+        hand[0] = baseX; hand[1] = baseY; hand[2] = 1.0;
+        for (let finger = 0; finger < 5; finger++) {
+            const angle = (isLeft ? -1 : 1) * (Math.PI / 3 + finger * (Math.PI / 12));
+            const lengthSeed = 30 + (finger === 0 ? -5 : (finger === 2 ? 10 : 5));
+            for (let joint = 0; joint < 4; joint++) {
+                const id = 1 + finger * 4 + joint;
+                const len = lengthSeed + joint * 15;
+                hand[id * 3] = Math.round(baseX + Math.sin(angle) * len);
+                hand[id * 3 + 1] = Math.round(baseY + Math.cos(angle) * len);
+                hand[id * 3 + 2] = 1.0;
+            }
+        }
+        return hand;
+    }
+
+async addHandsToSelection() {
+        if (this.lockMode) return;
+
+        let targetPoseId = -1;
+
+        // 1. 先看用户选了谁，记录下 PoseID
+        const activeCircles = this.canvas.getActiveObjects().filter(c => c.type === 'circle');
+        if (activeCircles.length > 0) {
+            targetPoseId = activeCircles[0]._poseId;
+        }
+
+        // 🚨 核心修复：强制释放选区！
+        // 如果你不释放选区，程序会找不到被框选的手腕的真实坐标！
+        this.canvas.discardActiveObject();
+
+        // 2. 如果没选任何东西，就找画布上的第一个身体
+        if (targetPoseId === -1) {
+            const allBodyCircles = this.canvas.getObjects('circle').filter(c => c._type === 'body' || !c._type);
+            if (allBodyCircles.length > 0) {
+                targetPoseId = allBodyCircles[0]._poseId;
+            }
+        }
+
+        if (targetPoseId === -1) {
+            alert("画布上没有身体关节，请先点击'重置'或生成角色身体。");
+            return;
+        }
+
+        // 3. 检查是否已经有手
+        const existingHands = this.canvas.getObjects('circle').filter(c =>
+            c._poseId === targetPoseId && (c._type === 'left_hand' || c._type === 'right_hand')
+        );
+        if (existingHands.length > 0) {
+            alert("该人物已有手部关节，请勿重复添加。");
+            return;
+        }
+
+        // 4. 精准锁定真实手腕坐标
+        const bodyPoints = this.canvas.getObjects('circle').filter(c =>
+            c._poseId === targetPoseId && (c._type === 'body' || !c._type)
+        );
+        const pointMap = {};
+        bodyPoints.forEach(p => pointMap[p._id] = p);
+
+        const getAnchor = (wristId, shoulderId) => {
+            if (pointMap[wristId]) return pointMap[wristId].getCenterPoint();
+            if (pointMap[shoulderId]) {
+                const sh = pointMap[shoulderId].getCenterPoint();
+                return { x: sh.x, y: sh.y + 100 };
+            }
+            return { x: DEFAULT_KEYPOINTS[wristId][0], y: DEFAULT_KEYPOINTS[wristId][1] };
+        };
+
+        const rWrist = getAnchor(4, 2);
+        const lWrist = getAnchor(7, 5);
+
+        // 5. 生成并在精确位置添加双手
+        this.addPose(this.generateStandardHandData(rWrist.x, rWrist.y, false), targetPoseId, "right_hand");
+        this.addPose(this.generateStandardHandData(lWrist.x, lWrist.y, true), targetPoseId, "left_hand");
+
+        // 延迟重绘，确保渲染层级正确
+        setTimeout(() => {
+            this.saveToNode();
+            this.canvas.requestRenderAll();
+        }, 50);
+    }
+
+    async addFeetToSelection() {
+        if (this.lockMode) return;
+
+        let targetPoseId = -1;
+        const activeCircles = this.canvas.getActiveObjects().filter(c => c.type === 'circle');
+        if (activeCircles.length > 0) {
+            targetPoseId = activeCircles[0]._poseId;
+        }
+
+        // 🚨 同样必须强制释放选区，否则找不准脚踝坐标
+        this.canvas.discardActiveObject();
+
+        if (targetPoseId === -1) {
+            const allBodyCircles = this.canvas.getObjects('circle').filter(c => c._type === 'body' || !c._type);
+            if (allBodyCircles.length > 0) {
+                targetPoseId = allBodyCircles[0]._poseId;
+            }
+        }
+
+        if (targetPoseId === -1) {
+            alert("画布上没有身体关节，请先生成角色。");
+            return;
+        }
+
+        const allBodyPoints = this.canvas.getObjects('circle').filter(c =>
+            c._poseId === targetPoseId && (c._type === 'body' || !c._type)
+        );
+        const existingFeet = allBodyPoints.filter(c => c._id >= 18 && c._id <= 24);
+
+        if (existingFeet.length >= 6) {
+            alert("该人物已有脚部关节，无需重复添加。");
+            return;
+        }
+
+        const pointMap = {};
+        allBodyPoints.forEach(p => pointMap[p._id] = p);
+
+        const getFeetPos = (id, ankleId) => {
+            if (pointMap[ankleId]) {
+                const ankle = pointMap[ankleId].getCenterPoint();
+                const dx = DEFAULT_KEYPOINTS[id][0] - DEFAULT_KEYPOINTS[ankleId][0];
+                const dy = DEFAULT_KEYPOINTS[id][1] - DEFAULT_KEYPOINTS[ankleId][1];
+                return { x: ankle.x + dx, y: ankle.y + dy };
+            }
+            return { x: DEFAULT_KEYPOINTS[id][0], y: DEFAULT_KEYPOINTS[id][1] };
+        };
+
+        for (let i = 18; i <= 24; i++) {
+            if (pointMap[i]) continue;
+            let parentAnkleId = 1;
+            if ([24, 22, 23].includes(i)) parentAnkleId = 10;
+            if ([21, 19, 20].includes(i)) parentAnkleId = 13;
+
+            const pos = getFeetPos(i, parentAnkleId);
+            const colorArr = connect_color[i] || [255, 255, 255];
+
+            const circle = new fabric.Circle({
+                left: pos.x, top: pos.y, radius: 5,
+                fill: `rgb(${colorArr.join(",")})`,
+                stroke: `rgb(${colorArr.join(",")})`,
+                strokeWidth: 1,
+                originX: 'center', originY: 'center',
+                hasControls: false, hasBorders: false,
+                _id: i,
+                _poseId: targetPoseId,
+                _type: 'body',
+                selectable: true
+            });
+            this.canvas.add(circle);
+        }
+
+        setTimeout(() => {
+            const poseJson = this.serializeJSON();
+            this.loadJSON(poseJson);
+            this.saveToNode();
+            this.canvas.requestRenderAll();
+        }, 50);
+    }
+
+    // ================= 👆 新增函数结束 👆 =================
 addPose(keypoints = [], poseId = null, type = "body") {
     const currentPoseId = poseId !== null ? poseId : this.nextPoseId++;
     const circles = {};
