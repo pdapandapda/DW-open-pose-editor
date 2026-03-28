@@ -1642,7 +1642,68 @@ canvas.on("object:modified", (e) => {
         console.log(">>> [绝对坐标同步 & 磁性吸附] 处理完成");
     }, 20);
 });
+// ==========================================
+// 🌟 终极外挂 1：W/S 键控制图层深度 (Z-index) + 实时视觉刷新
+// ==========================================
+window.addEventListener('keydown', (e) => {
+    // 如果界面被锁定，或者没有选中任何东西，直接忽略
+    if (this.lockMode) return;
 
+    // 获取当前被框选或单选的圆点
+    const activeCircles = canvas.getActiveObjects().filter(c => c.type === 'circle');
+    if (activeCircles.length === 0) return;
+
+    let depthChanged = false;
+
+    activeCircles.forEach(circle => {
+        // 如果点还没有深度属性，默认设为 1.0
+        if (circle._z_index === undefined) {
+            circle._z_index = 1.0;
+        }
+
+        if (e.key === 'w' || e.key === 'W') {
+            circle._z_index += 1.0; // W 键：图层上移
+            depthChanged = true;
+        } else if (e.key === 's' || e.key === 'S') {
+            circle._z_index = Math.max(0.1, circle._z_index - 1.0); // S 键：图层下移，最低 0.1
+            depthChanged = true;
+        }
+    });
+
+    if (depthChanged) {
+        console.log(`[深度外挂] 选中关节(ID: ${activeCircles[0]._id}) 的新深度为: ${activeCircles[0]._z_index}`);
+
+        // ====================================================
+        // 🎨 新增视觉魔法：让前端画布立刻重新叠放图层
+        // ====================================================
+        const allPolygons = canvas.getObjects('polygon');
+        const allCircles = canvas.getObjects('circle');
+
+        // 1. 重新计算所有连线（多边形）的平均深度
+        allPolygons.forEach(p => {
+            const z1 = p._startCircle && p._startCircle._z_index !== undefined ? p._startCircle._z_index : 1.0;
+            const z2 = p._endCircle && p._endCircle._z_index !== undefined ? p._endCircle._z_index : 1.0;
+            p._calc_depth = (z1 + z2) / 2.0;
+        });
+
+        // 2. 将线条按深度从小到大排序
+        allPolygons.sort((a, b) => a._calc_depth - b._calc_depth);
+
+        // 3. 依次把线条拉到顶层 (深度越大的越后拉，就会盖在最上面)
+        allPolygons.forEach(p => canvas.bringToFront(p));
+
+        // 4. 把所有的圆点（关节）统一再拉到最顶层，防止被线挡住导致鼠标点不到
+        allCircles.forEach(c => canvas.bringToFront(c));
+
+        // 5. 让画板立刻重绘，呈现出最新的遮挡关系
+        canvas.requestRenderAll();
+        // ====================================================
+
+        // 触发保存，把新深度写入 JSON (同时传给后端的 Python)
+        this.saveToNode();
+    }
+});
+// ==========================================
 
 return canvas;
     } // <-- 这里正确闭合 initCanvas 方法
@@ -1854,10 +1915,11 @@ serializeJSON() {
         else if (type === "face") targetArr = poses[poseId].face;
 
         if (targetArr && idx < targetArr.length) {
-            targetArr[idx] = Math.round(center.x);
-            targetArr[idx + 1] = Math.round(center.y);
-            targetArr[idx + 2] = 1.0; // 只要点在画布上，置信度就给满
-        }
+        targetArr[idx] = Math.round(center.x);
+        targetArr[idx + 1] = Math.round(center.y);
+        // 🌟 核心修改：如果该点被调过深度就用深度值，否则默认 1.0
+        targetArr[idx + 2] = circle._z_index !== undefined ? circle._z_index : 1.0;
+    }
     });
 
     const people = [];

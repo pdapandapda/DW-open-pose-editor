@@ -64,9 +64,11 @@ async def openpose_cancel(request):
 # ====================================================================================================
 # 常量定义
 # ====================================================================================================
-LIMB_SEQ = [[2, 3], [2, 6], [3, 4], [4, 5], [6, 7], [7, 8], [2, 9], [9, 10], [10, 11], [2, 12], [12, 13], [13, 14], [2, 1], [1, 15], [15, 17], [1, 16], [16, 18]]
+# 扩展为支持 BODY_25 格式，增加双脚 6 条连线
+LIMB_SEQ = [[2, 3], [2, 6], [3, 4], [4, 5], [6, 7], [7, 8], [2, 9], [9, 10], [10, 11], [2, 12], [12, 13], [13, 14], [2, 1], [1, 15], [15, 17], [1, 16], [16, 18], [11, 25], [11, 23], [23, 24], [14, 22], [14, 20], [20, 21]]
 
-COLORS = [[255, 0, 0], [255, 85, 0], [255, 170, 0], [255, 255, 0], [170, 255, 0], [85, 255, 0], [0, 255, 0], [0, 255, 85], [0, 255, 170], [0, 255, 255], [0, 170, 255], [0, 85, 255], [0, 0, 255], [85, 0, 255], [170, 0, 255], [255, 0, 255], [255, 0, 170], [255, 0, 85]]
+# 扩展颜色数组至 25 个，为脚部节点分配对应的颜色
+COLORS = [[255, 0, 0], [255, 85, 0], [255, 170, 0], [255, 255, 0], [170, 255, 0], [85, 255, 0], [0, 255, 0], [0, 255, 85], [0, 255, 170], [0, 255, 255], [0, 170, 255], [0, 85, 255], [0, 0, 255], [85, 0, 255], [170, 0, 255], [255, 0, 255], [255, 0, 170], [255, 0, 85], [0, 255, 255], [0, 255, 255], [0, 255, 255], [0, 0, 255], [0, 0, 255], [0, 0, 255], [255, 255, 255]]
 
 
 # 【最终整合版】OpenPose Editor 节点
@@ -252,25 +254,49 @@ class OpenPoseEditor:
             scaled_stickwidth *= xinsr_stick_scale
 
         for person in people:
-            # --- 1. 身体渲染 (Body) ---
+# --- 1. 身体渲染 (Body) ---
             # 兼容：优先找 'body', 找不到找 'pose_keypoints_2d'
             body_flat = person.get('body', person.get('pose_keypoints_2d', []))
             if body_flat:
-                kps = [ (int(body_flat[i] * scale_x), int(body_flat[i+1] * scale_y)) if body_flat[i+2] > 0 else None for i in range(0, len(body_flat), 3) ]
+                # 🌟 深度修复 1：把第三个数字(body_flat[i+2])也存进 kps 里！
+                kps = [ (int(body_flat[i] * scale_x), int(body_flat[i+1] * scale_y), body_flat[i+2]) if body_flat[i+2] > 0 else None for i in range(0, len(body_flat), 3) ]
+
+                # 🌟 深度修复 2：创建排序列表
+                lines_to_draw = []
                 for limb_indices, color in zip(LIMB_SEQ, COLORS):
                     idx1, idx2 = limb_indices[0] - 1, limb_indices[1] - 1
                     if idx1 < len(kps) and idx2 < len(kps):
-                        p1, p2 = kps[idx1], kps[idx2]
-                        if p1 and p2:
-                            Y, X = np.array([p1[0], p2[0]]), np.array([p1[1], p2[1]])
-                            mX, mY = np.mean(X), np.mean(Y)
-                            length = np.sqrt((X[0] - X[1])**2 + (Y[0] - Y[1])**2)
-                            angle = math.degrees(math.atan2(X[0] - X[1], Y[0] - Y[1]))
-                            polygon = cv2.ellipse2Poly((int(mY), int(mX)), (int(length / 2), scaled_stickwidth), int(angle), 0, 360, 1)
-                            cv2.fillConvexPoly(canvas, polygon, [int(c * 0.6) for c in color])
+                        p1_full, p2_full = kps[idx1], kps[idx2]
+                        if p1_full and p2_full:
+                            # 提取 X, Y 和 深度 Z
+                            p1, p2 = (p1_full[0], p1_full[1]), (p2_full[0], p2_full[1])
+                            z1, z2 = p1_full[2], p2_full[2]
+                            line_depth = (z1 + z2) / 2.0  # 计算这条线的平均层级
+
+                            lines_to_draw.append({
+                                'p1': p1, 'p2': p2,
+                                'color': color,
+                                'depth': line_depth
+                            })
+
+                # 🌟 深度修复 3：按深度排序，后画的覆盖前面的
+                lines_to_draw.sort(key=lambda x: x['depth'])
+
+                # 🌟 深度修复 4：保留原汁原味的高级纺锤形画法
+                for line in lines_to_draw:
+                    p1, p2, color = line['p1'], line['p2'], line['color']
+                    Y, X = np.array([p1[0], p2[0]]), np.array([p1[1], p2[1]])
+                    mX, mY = np.mean(X), np.mean(Y)
+                    length = np.sqrt((X[0] - X[1])**2 + (Y[0] - Y[1])**2)
+                    angle = math.degrees(math.atan2(X[0] - X[1], Y[0] - Y[1]))
+                    polygon = cv2.ellipse2Poly((int(mY), int(mX)), (int(length / 2), scaled_stickwidth), int(angle), 0, 360, 1)
+                    cv2.fillConvexPoly(canvas, polygon, [int(c * 0.6) for c in color])
+
+                # 画关节圆点
                 for i, kp in enumerate(kps):
                     if kp and i < len(COLORS):
-                        cv2.circle(canvas, kp, scaled_joint_radius, COLORS[i], thickness=-1)
+                        # 因为现在 kp 里有 3 个值，必须只取前两个画圆
+                        cv2.circle(canvas, (kp[0], kp[1]), scaled_joint_radius, COLORS[i], thickness=-1)
 
             # --- 2. 手部渲染 (Hands) ---
             hand_edges = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[0,9],[9,10],[10,11],[11,12],[0,13],[13,14],[14,15],[15,16],[0,17],[17,18],[18,19],[19,20]]
